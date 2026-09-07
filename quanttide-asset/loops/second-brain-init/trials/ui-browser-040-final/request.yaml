@@ -1,0 +1,12 @@
+schema_version: 1
+scenario: new-domain
+domain:
+  chinese_name: 示例工程
+  short_name: sample
+  english_name: sample-engineering
+  overview: 用于验证第二大脑创建流程的本地示例领域。
+  boundary: 包含示例资料的组织、验证与维护。
+  neighbors: 正式生产领域沿用各自知识仓库；这里仅记录演示材料。
+register_root: true
+root_repo: quanttide
+new_repositories_only: true

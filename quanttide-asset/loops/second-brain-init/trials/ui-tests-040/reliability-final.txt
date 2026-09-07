@@ -1,0 +1,13 @@
+test_readonly_survey_persists_without_creating_runs (test_reliability.ReliabilityUITests.test_readonly_survey_persists_without_creating_runs) ... ok
+test_remote_created_after_plan_blocks_before_writes (test_reliability.ReliabilityUITests.test_remote_created_after_plan_blocks_before_writes) ... ok
+test_rule_update_blocks_github_plan_before_engine (test_reliability.ReliabilityUITests.test_rule_update_blocks_github_plan_before_engine) ... ok
+test_empty_remote_is_distinguishable_from_absent (test_reliability.SurveyTests.test_empty_remote_is_distinguishable_from_absent) ... ok
+test_external_change_between_operations_stops_next_write (test_reliability.SurveyTests.test_external_change_between_operations_stops_next_write) ... ok
+test_http_failures_are_unknown_not_available (test_reliability.SurveyTests.test_http_failures_are_unknown_not_available) ... ok
+test_new_only_never_reuses_existing_repository (test_reliability.SurveyTests.test_new_only_never_reuses_existing_repository) ... ok
+test_root_documents_are_pinned_and_rule_change_is_visible (test_reliability.SurveyTests.test_root_documents_are_pinned_and_rule_change_is_visible) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 2.658s
+
+OK

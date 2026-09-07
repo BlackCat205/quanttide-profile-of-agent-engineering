@@ -1,0 +1,22 @@
+{
+  "ui_version": "0.4.0",
+  "engine_version": "0.2.1",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.39",
+  "python": "3.12.13",
+  "git": "git version 2.51.1",
+  "core_tests_passed": 17,
+  "ui_tests_passed": 8,
+  "reliability_tests_passed": 8,
+  "browser_checks_passed": 44,
+  "real_public_read_only": true,
+  "real_github_writes": false,
+  "real_windows_user_acceptance": false,
+  "export_recheck_time_and_chinese_status_test": "passed",
+  "sha256": {
+    "quanttide-asset/skills/second-brain-init/scripts/engine.py": "0436fd5df8a48ccbeba86f2c6195be6fb23184d4cb53aac55fc991fae3dd1a85",
+    "quanttide-asset/skills/second-brain-init/assets/specification.yaml": "ac098eaeb2251c6a5790b3683d22329ed957ab744a93fe177ad36b72b5f8e2f7",
+    "quanttide-asset/loops/second-brain-init/ui/app.py": "f432badf2b3eaed0321d5a9a0e6fa7f3ae5c9a6460407bfa55bb42c49e86f74a",
+    "quanttide-asset/loops/second-brain-init/ui/survey.py": "b0c676c1c127ec6b2ef20f761f241d3dd98ed363e1d1383098fcde4b1ee4db34",
+    "quanttide-asset/loops/second-brain-init/ui/static/app.js": "0089f64fc5042547e3c8640821aa33de9d0185f0a7fca2f272d2f362af0b7343"
+  }
+}

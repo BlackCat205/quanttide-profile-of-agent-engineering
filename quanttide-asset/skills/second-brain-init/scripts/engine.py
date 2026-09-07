@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
@@ -134,9 +134,10 @@ class Provider:
         raw = command(['git', 'ls-remote', self.remote(name), 'refs/heads/'+info['branch']]).stdout.strip()
         return raw.split()[0] if raw else None
 
-    def ensure(self, name, allow_create, title):
+    def ensure(self, name, allow_create, title, require_new=False):
         path = self.repo(name)
         info = self.info(name)
+        require(not require_new or not info['exists'], f'新建目标 {name} 已存在；停止，不能自动复用。')
         if not info['exists']:
             require(allow_create, f'仓库 {name} 不存在。')
             if self.kind == 'local':
@@ -174,7 +175,7 @@ def snapshot(provider, names, strict=False):
     result = {}
     for name in sorted(set(names)):
         path = provider.repo(name)
-        item = {'remote': provider.head(name), 'local': None, 'status': None, 'rules': {}}
+        item = {'remote': provider.head(name), 'remote_exists': provider.info(name)['exists'], 'local': None, 'status': None, 'rules': {}}
         if path.exists():
             require((path/'.git').exists(), f'已有目录不是仓库：{name}')
             item['local'] = git(path, 'rev-parse', 'HEAD', check=False).stdout.strip()
@@ -208,8 +209,10 @@ def validate_config(cfg, spec):
     require(cfg.get('scenario') in spec['scenarios'], '请明确选择 scenario，支持范围见示例。')
     require(cfg.get('schema_version') == 1, 'schema_version 必须为 1。')
     scenario = cfg['scenario']
-    known = {'schema_version','scenario','domain','target_repo','asset_type','assets','mounts','root_repo','register_root','renames','reference_repos','version','notes'}
+    known = {'schema_version','scenario','domain','target_repo','asset_type','assets','mounts','root_repo','register_root','renames','reference_repos','version','notes','new_repositories_only'}
     require(not set(cfg)-known, '未知配置字段：'+', '.join(sorted(set(cfg)-known)))
+    require(isinstance(cfg.get('new_repositories_only',False),bool), 'new_repositories_only 必须为布尔值。')
+    require(not cfg.get('new_repositories_only') or scenario=='new-domain', '仅新建领域可启用禁止复用模式。')
     require(isinstance(cfg.get('register_root', True), bool), 'register_root 必须为布尔值。')
     for field in spec['scenarios'][scenario]['required_inputs']:
         require(bool(cfg.get(field)), f'缺少输入 {field}，请补充后重试。')
@@ -273,7 +276,7 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         names.add(slug(repo))
         ops.append(dict(id=f'{len(ops)+1:03}', kind=kind, repo=repo, **kwargs))
     def ensure(name, allow, title=None):
-        add('ensure-repo', name, allow_create=allow, title=title or name)
+        add('ensure-repo', name, allow_create=allow, title=title or name, require_new=bool(cfg.get('new_repositories_only') and name!=root))
     def finish(name):
         add('finish', name)
     mounts = list(cfg.get('mounts', []))
@@ -333,6 +336,7 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
     for op in ops:
         if op['kind'] == 'ensure-repo':
             require(op['allow_create'] or initial[op['repo']]['remote'], f'已有仓库场景要求远端存在：{op["repo"]}')
+            require(not op.get('require_new') or not initial[op['repo']]['remote_exists'], f'新建目标 {op["repo"]} 已存在；请改名或单独调查维护，不能自动复用。')
         if op['kind'] == 'rename-repo':
             require(not initial[op['new_name']]['remote'] and not initial[op['new_name']]['local'], '更名目标已经存在。')
     # Read-only materialization of remote README/rules for review is a clone into run_dir, not the target workspace.
@@ -416,7 +420,7 @@ class Executor:
         repo = provider.repo(op['repo'])
         kind = op['kind']
         if kind == 'ensure-repo':
-            provider.ensure(op['repo'],op['allow_create'],op['title'])
+            provider.ensure(op['repo'],op['allow_create'],op['title'],require_new=op.get('require_new',False))
         elif kind == 'mount':
             path, url = op['path'], provider.remote(op['child'])
             existing = modules(repo)
@@ -629,6 +633,7 @@ def apply(run):
         try:
             for op in plan['operations']:
                 if op['id'] in state['completed']: continue
+                require(snapshot(provider,plan['names']) == state['checkpoint'], '执行过程中仓库已变化；停止并保留已完成记录，请重新调查。')
                 executor.execute(op)
                 state['completed'].append(op['id'])
                 state['events'].append({'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed'})

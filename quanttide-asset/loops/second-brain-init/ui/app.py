@@ -27,7 +27,9 @@ bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
 bridge.load_contract()
 sys.path.insert(0,str(ASSET/'skills/second-brain-init/scripts'))
 import engine as e
-VERSION='0.3.2'
+sys.path.insert(0,str(HERE))
+import survey
+VERSION='0.4.0'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -72,6 +74,29 @@ class Studio:
             if meta.get('status') in ('planning','running','verifying'):
                 meta.update(status='paused',error='上次窗口服务已结束。请查看已完成步骤，再尝试继续；有残留锁时请维护者检查。')
                 e.save(folder/'ui.json',meta)
+        for folder in self.storage.glob('surveys/*'):
+            meta=read(folder/'ui.json',{})
+            if meta.get('status')=='surveying':self.set_meta(folder,status='paused',error='上次调查中断，请重新查询。')
+
+    def start_survey(self,payload):
+        validation=validate_request(payload);e.require(validation['valid'],'请先填写有效需求，再查询本次目标。')
+        org=e.slug(payload.get('survey_organization','quanttide').strip())
+        domain=validation['domain'];specification=e.read_yaml(e.SPEC)
+        mapping=e.asset_map(domain,specification)
+        names=['quanttide','quanttide-'+domain['short_name']]+[mapping[k]['repo'] for k in specification['initial_assets']]
+        key=secrets.token_hex(8);folder=self.storage/'surveys'/key;folder.mkdir(parents=True)
+        self.set_meta(folder,id=key,status='surveying',organization=org,domain=domain)
+        def task():
+            report=survey.inspect(org,names,specification['sources']['bylaw'])
+            e.save(folder/'report.json',report);self.set_meta(folder,status='completed')
+        self.spawn(folder,task)
+        return {'id':key}
+
+    def survey_view(self,key):
+        e.require(bool(re.fullmatch('[a-f0-9]{16}',key)),'调查编号无效。')
+        folder=self.storage/'surveys'/key
+        e.require(folder.is_dir() and not folder.is_symlink(),'找不到调查记录。')
+        return dict(read(folder/'ui.json'),report=read(folder/'report.json'))
 
     def folder(self,key):
         e.require(bool(re.fullmatch('[a-f0-9]{16}',key)), '运行编号无效。')
@@ -102,7 +127,7 @@ class Studio:
         validation=validate_request(payload)
         e.require(validation['valid'],'；'.join(validation['errors'].values()))
         domain=validation['domain']
-        cfg={'schema_version':1,'scenario':'new-domain','domain':domain,'register_root':True,'root_repo':'quanttide'}
+        cfg={'schema_version':1,'scenario':'new-domain','domain':domain,'register_root':True,'root_repo':'quanttide','new_repositories_only':True}
         e.validate_config(cfg,e.read_yaml(e.SPEC))
         org=e.slug(payload.get('organization','quanttide').strip() or 'quanttide')
         key=secrets.token_hex(8);folder=self.storage/'runs'/key;folder.mkdir(parents=True)
@@ -111,7 +136,20 @@ class Studio:
         (folder/'request.yaml').write_text(yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False),encoding='utf-8')
         self.set_meta(folder,id=key,title=domain['chinese_name'],provider=provider,organization=org,status='planning',created_at=e.now(),error=None)
         def task():
+            if provider=='github':
+                specification=e.read_yaml(e.SPEC);mapping=e.asset_map(domain,specification)
+                observation=survey.inspect(org,['quanttide','quanttide-'+domain['short_name']]+[mapping[k]['repo'] for k in specification['initial_assets']],specification['sources']['bylaw'])
+                e.save(folder/'survey.json',observation)
+                e.require(observation['rules']['status']=='same','在线章程变化或无法核对；请维护者核对规则，不能继续。')
+                for row in observation['repositories']:
+                    if row['name']=='quanttide':e.require(bool(row.get('commit')),'总入口版本无法确定，停止生成写入方案。')
+                    elif row['status']=='exists':raise e.WorkflowError('新建目标 '+row['name']+' 已存在；请改名或单独调查维护。')
+                    else:e.require(row.get('http_status')==404,'目标查询失败，不能当作可新建：'+row['name'])
             e.make_plan(folder/'request.yaml',work,folder,provider,org)
+            planned=e.load_plan(folder)
+            if provider=='github':
+                root=next(r for r in observation['repositories'] if r['name']=='quanttide')
+                e.require(root['commit']==planned['before']['quanttide']['remote'],'调查期间总入口已变化，请重新规划。')
             self.set_meta(folder,status='review')
         self.spawn(folder,task)
         return {'id':key}
@@ -133,6 +171,22 @@ class Studio:
             self.set_meta(folder,status='running',error=None)
             def task():
                 try:
+                    check={'started_at':e.now(),'plan_id':plan['id'],'provider':plan['provider'],'scope':plan['names'],'status':'checking'}
+                    try:
+                        current=e.snapshot(e.Provider(plan['workspace'],plan['provider'],plan['organization']),plan['names'])
+                        expected=read(folder/'execution-log.json',{}).get('checkpoint',plan['before'])
+                        check.update(current=current,changed=[name for name in plan['names'] if current[name]!=expected.get(name)])
+                        e.require(not check['changed'],'仓库状态已变化：'+', '.join(check['changed'])+'；请重新调查并生成方案。')
+                        if plan['provider']=='github':
+                            adopted=plan['sources']['bylaw'];owner,repo=adopted['repository'].split('/')
+                            latest=survey.text_file(owner,repo,adopted['path'])
+                            baseline=read(folder/'survey.json',{}).get('rules',{}).get('adopted_file',{})
+                            e.require(latest['status']=='ok' and latest.get('sha')==baseline.get('sha'),'执行前章程变化或无法核对，停止。')
+                        check['status']='passed'
+                    except Exception as exc:
+                        check.update(status='blocked',reason=cleaned_error(exc));raise
+                    finally:
+                        check['finished_at']=e.now();e.save(folder/'pre-execution-check.json',check)
                     e.apply(folder)
                 except e.WorkflowError:
                     if (folder/'verification-report.json').is_file():self.build_report(folder)
@@ -206,7 +260,7 @@ class Studio:
 
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
-        result=dict(meta,completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file()),storage=str(folder))
+        result=dict(meta,completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'))
         if plan:
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))
             expected={'quanttide-'+d['short_name'],'quanttide'}|{m[k]['repo'] for k in e.read_yaml(e.SPEC)['initial_assets']}
@@ -217,6 +271,13 @@ class Studio:
                 {'status':'manual','title':'本次操作位置','detail':'本机独立测试空间，不写入 GitHub。' if plan['provider']=='local' else '将写入 '+plan['organization']+' 的公开 GitHub 仓库；请核对组织授权与已有规则。'}]
             result['plan']={'id':plan['id'],'domain':d,'provider':plan['provider'],'workspace':plan['workspace'],'repositories':[dict(name='quanttide-'+d['short_name'],role='领域首页',purpose='本领域的介绍和资料导航。',path='domains/quanttide-'+d['short_name'])]+[dict(name=m[k]['repo'],role=ROLES[k][0],purpose=ROLES[k][1],path=m[k]['path']) for k in ROLES]+[dict(name='quanttide',role='总入口',purpose='从这里查找各领域。',path='总入口')],'inspection':plan['inspection']}
         if log.get('events'):result['last_operation']=log['events'][-1].get('kind')
+        if plan:
+            result['observation']={'at':plan['created_at'],'provider':plan['provider'],'organization':plan['organization'],'scope':'仅本次计划涉及的仓库，非持续监控。','rules':plan['sources']['bylaw'],'spec_sha256':plan['spec_sha256']}
+            for row in result['plan']['repositories']:
+                before=plan['before'][row['name']]
+                row['observed_commit']=before['remote']
+                row['action']='拟更新已有总入口' if before.get('remote_exists') and row['name']=='quanttide' else '冲突：新建禁止复用' if before.get('remote_exists') else '拟新建本地仓库' if plan['provider']=='local' else '未发现可见仓库；仅尝试新建，重名时停止'
+                row['writes']=[op['kind'] for op in plan['operations'] if op['repo']==row['name']]
         result['report']=read(folder/'ui-report.json')
         acceptance=read(folder/'human-acceptance.json')
         if acceptance and result['report']:acceptance['stale']=acceptance['signature']!=result['report']['signature']
@@ -237,11 +298,13 @@ class Studio:
         esc=lambda x:html.escape(str(x))
         rows=''.join('<tr><td>'+esc(x['title'])+'</td><td>'+esc(x['standard'])+'</td><td>'+esc(x['actual'])+'</td><td>'+('通过' if x['status']=='passed' else '未通过')+'</td><td>'+esc(x['source'])+'</td></tr>' for x in report['rows'])
         acceptance=view.get('acceptance')
+        check=view.get('pre_execution')
+        execution_evidence=('执行前复核：'+({'passed':'通过','blocked':'已阻止执行'}.get(check['status'],check['status']))+'；开始：'+check['started_at']+'；结束：'+check['finished_at']+'；'+check.get('reason','本次涉及 '+str(len(check['scope']))+' 个仓库。')) if check else '此历史记录未保存执行前复核证据。'
         human='尚未完成人工验收。'
         if acceptance:
             labels={'meaning':'领域内容','navigation':'资料导航','usability':'使用体验'}
             human=('模拟反馈，不能作为真实用户验收。' if acceptance['simulated'] else '验收人：'+acceptance['reviewer'])+'；'+('旧报告意见，需重新确认。' if acceptance['stale'] else '；'.join(labels[k]+'：'+('通过' if v=='passed' else '需改进') for k,v in acceptance['choices'].items()))+'；意见：'+acceptance['notes']
-        return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>第二大脑验收报告</title><style>body{font:16px/1.7 system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#18352f}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd9d2;padding:12px;text-align:left;overflow-wrap:anywhere}h1{font-size:28px}@media print{body{margin:0}}</style><h1>'+esc(view['title'])+' · 验收报告</h1><p>检查时间：'+esc(report['checked_at'])+'</p><p>任务状态：'+esc({'completed':'已完成','paused':'已暂停','verifying':'检查中'}.get(view['status'],view['status']))+'</p><p>'+esc(report['scope'])+'</p><p>确认方式：'+('模拟确认（自动化测试）' if report['simulated'] else '已记录审阅者确认')+'</p><table><tr><th>检查项目</th><th>标准</th><th>实际结果</th><th>状态</th><th>依据</th></tr>'+rows+'</table><h2>人工验收</h2><p>'+esc(human)+'</p><h2>验证边界</h2><p>配套仓库是初始骨架，不代表业务应用已开发。技术检查通过不代表领域内容准确。此工具尚未作为资产云在线页面部署。</p></html>'
+        return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>第二大脑验收报告</title><style>body{font:16px/1.7 system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#18352f}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd9d2;padding:12px;text-align:left;overflow-wrap:anywhere}h1{font-size:28px}@media print{body{margin:0}}</style><h1>'+esc(view['title'])+' · 验收报告</h1><p>检查时间：'+esc(report['checked_at'])+'</p><p>任务状态：'+esc({'completed':'已完成','paused':'已暂停','verifying':'检查中'}.get(view['status'],view['status']))+'</p><p>'+esc(report['scope'])+'</p><p>确认方式：'+('模拟确认（自动化测试）' if report['simulated'] else '已记录审阅者确认')+'</p><table><tr><th>检查项目</th><th>标准</th><th>实际结果</th><th>状态</th><th>依据</th></tr>'+rows+'</table><h2>执行前复核</h2><p>'+esc(execution_evidence)+'</p><h2>人工验收</h2><p>'+esc(human)+'</p><h2>验证边界</h2><p>配套仓库是初始骨架，不代表业务应用已开发。技术检查通过不代表领域内容准确。此工具尚未作为资产云在线页面部署。</p></html>'
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
@@ -268,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/info':return self.send(200,{'version':VERSION,'storage':str(studio.storage),'github_enabled':studio.enable_github,'simulated':studio.test_mode,'git':shutil.which('git') is not None})
             if path=='/api/runs':return self.send(200,sorted([read(p,{}) for p in studio.storage.glob('runs/*/ui.json')],key=lambda x:x.get('created_at',''),reverse=True))
             if path=='/api/naming-rules':return self.send(200,naming_rules())
+            survey_match=re.fullmatch('/api/surveys/([a-f0-9]{16})',path)
+            if survey_match:return self.send(200,studio.survey_view(survey_match[1]))
             m=re.fullmatch('/api/runs/([a-f0-9]{16})(/export)?',path)
             if m:return self.send(200,studio.export(m[1]),'text/html; charset=utf-8',True) if m[2] else self.send(200,studio.view(m[1]))
             self.send(404,{'error':'找不到此页面。'})
@@ -278,6 +343,7 @@ class Handler(BaseHTTPRequestHandler):
             payload=json.loads(self.rfile.read(size));e.require(isinstance(payload,dict),'请求格式错误。')
             path=urlsplit(self.path).path;studio=self.server.studio
             if path=='/api/plan':return self.send(200,studio.create(payload))
+            if path=='/api/survey':return self.send(200,studio.start_survey(payload))
             m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')

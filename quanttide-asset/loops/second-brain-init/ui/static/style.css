@@ -3,3 +3,5 @@
 .next-task{border-top:1px solid var(--line);margin-top:24px;padding-top:20px;display:flex;align-items:center;justify-content:space-between;gap:12px}.next-task p{font-size:13px;color:var(--muted)}#header-new{margin-left:auto;margin-right:20px;white-space:nowrap}#result-new{background:#fff;color:var(--green)}@media(max-width:560px){.top-meta{display:none}#header-new{margin-right:0;padding:8px 12px;font-size:12px}.next-task{align-items:stretch;flex-direction:column}}
 
 .field-feedback{display:block;min-height:1.5em;overflow-wrap:anywhere}.field-feedback.invalid{color:#a52e2e}input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:#a52e2e}.preflight-row{padding:12px 0;border-bottom:1px solid #d9e4de}.preflight-row p{margin:5px 0}.manual{color:#825b16}
+
+#survey-result{overflow-wrap:anywhere}#survey-result pre{white-space:pre-wrap;max-height:320px;overflow:auto}#observation-info{overflow-wrap:anywhere}

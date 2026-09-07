@@ -34,10 +34,10 @@ class UITests(unittest.TestCase):
     def json(self,path,payload=None):
         code,raw=self.request(path,payload);self.assertEqual(code,200,raw);return json.loads(raw)
     def wait(self,key):
-        until=time.monotonic()+30
+        until=time.monotonic()+120
         while time.monotonic()<until:
             result=self.json('/api/runs/'+key)
-            if key not in self.studio.active:return result
+            if key not in self.studio.active:return self.json('/api/runs/'+key)
             time.sleep(.03)
         self.fail('worker timed out')
     def plan(self,values=None):

@@ -1,0 +1,150 @@
+test_append_replaces_only_empty_coordinate (test_implementation.WorkflowTests.test_append_replaces_only_empty_coordinate) ... ok
+test_asset_contract_bridge_loads_and_dispatches (test_implementation.WorkflowTests.test_asset_contract_bridge_loads_and_dispatches) ... ok
+test_changed_plan_invalidates_approval (test_implementation.WorkflowTests.test_changed_plan_invalidates_approval) ... ok
+test_complete_preserves_existing_readme_and_license (test_implementation.WorkflowTests.test_complete_preserves_existing_readme_and_license) ... ok
+test_drift_after_approval_blocks_execution (test_implementation.WorkflowTests.test_drift_after_approval_blocks_execution) ... ok
+test_idempotent_replan_preserves_commit_ids (test_implementation.WorkflowTests.test_idempotent_replan_preserves_commit_ids) ... ok
+test_mount_product_and_aggregate (test_implementation.WorkflowTests.test_mount_product_and_aggregate) ... ok
+test_new_domain_real_git_and_root_registration (test_implementation.WorkflowTests.test_new_domain_real_git_and_root_registration) ... ok
+test_new_plan_refuses_dirty_existing_repository (test_implementation.WorkflowTests.test_new_plan_refuses_dirty_existing_repository) ... ok
+test_occupied_mount_is_preserved_and_execution_pauses (test_implementation.WorkflowTests.test_occupied_mount_is_preserved_and_execution_pauses) ... ok
+test_path_injection_and_missing_fields_fail_before_mutation (test_implementation.WorkflowTests.test_path_injection_and_missing_fields_fail_before_mutation) ... ok
+test_pauses_then_resumes_without_repeating_commits (test_implementation.WorkflowTests.test_pauses_then_resumes_without_repeating_commits) ... ok
+test_portable_skill_copy_runs_without_source_tree (test_implementation.WorkflowTests.test_portable_skill_copy_runs_without_source_tree) ... ok
+test_release_creates_pushed_tag_and_notes (test_implementation.WorkflowTests.test_release_creates_pushed_tag_and_notes) ... ok
+test_rename_assets_updates_domain_and_root_pointers (test_implementation.WorkflowTests.test_rename_assets_updates_domain_and_root_pointers) ... ok
+test_unapproved_run_never_creates_workspace (test_implementation.WorkflowTests.test_unapproved_run_never_creates_workspace) ... ok
+test_workspace_lock_blocks_other_run (test_implementation.WorkflowTests.test_workspace_lock_blocks_other_run) ... ok
+test_readonly_survey_persists_without_creating_runs (test_reliability.ReliabilityUITests.test_readonly_survey_persists_without_creating_runs) ... ok
+test_remote_created_after_plan_blocks_before_writes (test_reliability.ReliabilityUITests.test_remote_created_after_plan_blocks_before_writes) ... ok
+test_rule_update_blocks_github_plan_before_engine (test_reliability.ReliabilityUITests.test_rule_update_blocks_github_plan_before_engine) ... FAIL
+test_empty_remote_is_distinguishable_from_absent (test_reliability.SurveyTests.test_empty_remote_is_distinguishable_from_absent) ... ok
+test_http_failures_are_unknown_not_available (test_reliability.SurveyTests.test_http_failures_are_unknown_not_available) ... ok
+test_new_only_never_reuses_existing_repository (test_reliability.SurveyTests.test_new_only_never_reuses_existing_repository) ... ok
+test_root_documents_are_pinned_and_rule_change_is_visible (test_reliability.SurveyTests.test_root_documents_are_pinned_and_rule_change_is_visible) ... ok
+test_changed_files_invalidate_acceptance (test_ui.UITests.test_changed_files_invalidate_acceptance) ... FAIL
+test_changed_files_invalidate_acceptance (test_ui.UITests.test_changed_files_invalidate_acceptance) ... ERROR
+test_confirm_real_execution_report_and_feedback (test_ui.UITests.test_confirm_real_execution_report_and_feedback) ... /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/yaml/scanner.py:289: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/second-brain-ui-test-na2rgg1f/workspaces/.cf80422ac904aad8.second-brain-init.lock' mode='x' encoding='UTF-8'>
+  or self.index-key.index > 1024:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+FAIL
+test_cross_origin_missing_token_and_foreign_host_blocked (test_ui.UITests.test_cross_origin_missing_token_and_foreign_host_blocked) ... ok
+test_document_allowlist_and_export_escape (test_ui.UITests.test_document_allowlist_and_export_escape) ... /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/yaml/scanner.py:286: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/second-brain-ui-test-b1elspwr/workspaces/.f261f9a707439a18.second-brain-init.lock' mode='x' encoding='UTF-8'>
+  for level in list(self.possible_simple_keys):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+FAIL
+test_document_allowlist_and_export_escape (test_ui.UITests.test_document_allowlist_and_export_escape) ... ERROR
+test_failed_final_verification_still_exposes_readable_report (test_ui.UITests.test_failed_final_verification_still_exposes_readable_report) ... /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/yaml/scanner.py:289: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/second-brain-ui-test-oqwuiuin/workspaces/.e9d92dad84d167fe.second-brain-init.lock' mode='x' encoding='UTF-8'>
+  or self.index-key.index > 1024:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+FAIL
+test_invalid_input_and_github_disabled_before_plan (test_ui.UITests.test_invalid_input_and_github_disabled_before_plan) ... ok
+test_naming_rules_and_direct_request_rejection (test_ui.UITests.test_naming_rules_and_direct_request_rejection) ... /opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/yaml/scanner.py:286: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/second-brain-ui-test-9aa2yb6a/workspaces/.85611c5e77e5fcb9.second-brain-init.lock' mode='x' encoding='UTF-8'>
+  for level in list(self.possible_simple_keys):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_restart_marks_inflight_run_paused (test_ui.UITests.test_restart_marks_inflight_run_paused) ... ok
+
+======================================================================
+ERROR: test_changed_files_invalidate_acceptance (test_ui.UITests.test_changed_files_invalidate_acceptance)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 27, in tearDown
+    self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
+                                                                         ^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/tempfile.py", line 954, in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/tempfile.py", line 934, in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 759, in rmtree
+    _rmtree_safe_fd(stack, onexc)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 703, in _rmtree_safe_fd
+    onexc(func, path, err)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 662, in _rmtree_safe_fd
+    os.rmdir(name, dir_fd=dirfd)
+OSError: [Errno 39] Directory not empty: '/tmp/second-brain-ui-test-na2rgg1f'
+
+======================================================================
+ERROR: test_document_allowlist_and_export_escape (test_ui.UITests.test_document_allowlist_and_export_escape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 27, in tearDown
+    self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
+                                                                         ^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/tempfile.py", line 954, in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/tempfile.py", line 934, in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 759, in rmtree
+    _rmtree_safe_fd(stack, onexc)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 703, in _rmtree_safe_fd
+    onexc(func, path, err)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/shutil.py", line 662, in _rmtree_safe_fd
+    os.rmdir(name, dir_fd=dirfd)
+OSError: [Errno 39] Directory not empty: '/tmp/second-brain-ui-test-oqwuiuin'
+
+======================================================================
+FAIL: test_rule_update_blocks_github_plan_before_engine (test_reliability.ReliabilityUITests.test_rule_update_blocks_github_plan_before_engine)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_reliability.py", line 89, in test_rule_update_blocks_github_plan_before_engine
+    r=self.json('/api/surveys/'+key)
+AssertionError: 'planning' != 'paused'
+- planning
++ paused
+
+
+======================================================================
+FAIL: test_changed_files_invalidate_acceptance (test_ui.UITests.test_changed_files_invalidate_acceptance)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 85, in test_changed_files_invalidate_acceptance
+    key,v=self.execute();self.accept(key,v)
+          ^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 47, in execute
+    v=self.wait(key);self.assertEqual(v['status'],'completed',v);return key,v
+      ^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 42, in wait
+    self.fail('worker timed out')
+AssertionError: worker timed out
+
+======================================================================
+FAIL: test_confirm_real_execution_report_and_feedback (test_ui.UITests.test_confirm_real_execution_report_and_feedback)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 77, in test_confirm_real_execution_report_and_feedback
+    v=self.wait(key);self.assertEqual(v['status'],'completed',v)
+      ^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 42, in wait
+    self.fail('worker timed out')
+AssertionError: worker timed out
+
+======================================================================
+FAIL: test_document_allowlist_and_export_escape (test_ui.UITests.test_document_allowlist_and_export_escape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 92, in test_document_allowlist_and_export_escape
+    key,v=self.execute(dict(BASE,chinese_name='<script>alert(1)</script>'))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 47, in execute
+    v=self.wait(key);self.assertEqual(v['status'],'completed',v);return key,v
+      ^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 42, in wait
+    self.fail('worker timed out')
+AssertionError: worker timed out
+
+======================================================================
+FAIL: test_failed_final_verification_still_exposes_readable_report (test_ui.UITests.test_failed_final_verification_still_exposes_readable_report)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 107, in test_failed_final_verification_still_exposes_readable_report
+    result=self.wait(key)
+           ^^^^^^^^^^^^^^
+  File "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests/test_ui.py", line 42, in wait
+    self.fail('worker timed out')
+AssertionError: worker timed out
+
+----------------------------------------------------------------------
+Ran 32 tests in 539.571s
+
+FAILED (failures=5, errors=2)

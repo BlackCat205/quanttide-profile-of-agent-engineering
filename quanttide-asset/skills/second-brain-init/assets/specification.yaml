@@ -1,5 +1,5 @@
 name: second-brain-init
-version: 0.2.0
+version: 0.2.1
 description: 领域第二大脑初始化与维护循环
 entry: 用户提出创建或维护第二大脑的意图
 exit: 用户收到经过校验的结果报告

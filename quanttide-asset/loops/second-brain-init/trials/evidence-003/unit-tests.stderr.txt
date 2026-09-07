@@ -1,0 +1,22 @@
+test_append_replaces_only_empty_coordinate (test_implementation.WorkflowTests.test_append_replaces_only_empty_coordinate) ... ok
+test_asset_contract_bridge_loads_and_dispatches (test_implementation.WorkflowTests.test_asset_contract_bridge_loads_and_dispatches) ... ok
+test_changed_plan_invalidates_approval (test_implementation.WorkflowTests.test_changed_plan_invalidates_approval) ... ok
+test_complete_preserves_existing_readme_and_license (test_implementation.WorkflowTests.test_complete_preserves_existing_readme_and_license) ... ok
+test_drift_after_approval_blocks_execution (test_implementation.WorkflowTests.test_drift_after_approval_blocks_execution) ... ok
+test_idempotent_replan_preserves_commit_ids (test_implementation.WorkflowTests.test_idempotent_replan_preserves_commit_ids) ... ok
+test_mount_product_and_aggregate (test_implementation.WorkflowTests.test_mount_product_and_aggregate) ... ok
+test_new_domain_real_git_and_root_registration (test_implementation.WorkflowTests.test_new_domain_real_git_and_root_registration) ... ok
+test_new_plan_refuses_dirty_existing_repository (test_implementation.WorkflowTests.test_new_plan_refuses_dirty_existing_repository) ... ok
+test_occupied_mount_is_preserved_and_execution_pauses (test_implementation.WorkflowTests.test_occupied_mount_is_preserved_and_execution_pauses) ... ok
+test_path_injection_and_missing_fields_fail_before_mutation (test_implementation.WorkflowTests.test_path_injection_and_missing_fields_fail_before_mutation) ... ok
+test_pauses_then_resumes_without_repeating_commits (test_implementation.WorkflowTests.test_pauses_then_resumes_without_repeating_commits) ... ok
+test_portable_skill_copy_runs_without_source_tree (test_implementation.WorkflowTests.test_portable_skill_copy_runs_without_source_tree) ... ok
+test_release_creates_pushed_tag_and_notes (test_implementation.WorkflowTests.test_release_creates_pushed_tag_and_notes) ... ok
+test_rename_assets_updates_domain_and_root_pointers (test_implementation.WorkflowTests.test_rename_assets_updates_domain_and_root_pointers) ... ok
+test_unapproved_run_never_creates_workspace (test_implementation.WorkflowTests.test_unapproved_run_never_creates_workspace) ... ok
+test_workspace_lock_blocks_other_run (test_implementation.WorkflowTests.test_workspace_lock_blocks_other_run) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 31.619s
+
+OK

@@ -1,0 +1,15 @@
+{
+  "launch.py": "488bfa6dcbaa234501552435d4cc2f3e8d75a3784f21566735fc7fbfef6d53a3",
+  "启动向导.bat": "d2036007a006589ab3c982a844cf38b565ff6c3e23cc1e4ca3debd7a09a5debd",
+  "首次配置.bat": "cf358c11dc5c021817ed9d8a31158242f3d1f169e2aecb9efb367b10f38526ad",
+  "quanttide-asset/.quanttide/asset/contract.yaml": "d4ebdb083c680572c62dbf4b50a8a03b5e062c6d03e06ac546a44974a311c4af",
+  "quanttide-asset/asset-entry.py": "eedac02379db0512b92292eb1f60285c3e7a3a090bd2e04a6f00ba10371fa56b",
+  "quanttide-asset/skills/second-brain-init/scripts/engine.py": "7190e9a94fab5d653e80ed055f9ce9549d40a85cbcce11bf25933fd977d82d25",
+  "quanttide-asset/skills/second-brain-init/assets/specification.yaml": "447aac48cf4d8a291298ae43d357388f28defb12a405a2d031512518a0194661",
+  "quanttide-asset/loops/second-brain-init/ui/app.py": "8186c1d366f6d549980716e996bb48c4d6ab346b95baadfe253f3bdf1ebf6f63",
+  "quanttide-asset/loops/second-brain-init/ui/static/style.css": "59af90a63621e5e65320fdc2c3d0e3592c8c134f9c9a34d0b3c91e17e4bd0394",
+  "quanttide-asset/loops/second-brain-init/ui/static/app.js": "d60587f659ddbb2561757e597201455526862ad6d20b0283eeb4b8b9b379cff3",
+  "quanttide-asset/loops/second-brain-init/ui/static/index.html": "6ab865e76589166ce829d604c93986dbbdba5ede83b60936a237f02339a206ab",
+  "quanttide-asset/loops/second-brain-init/tests/test_ui.py": "0e967f71d4652f6c252ba11c315b4f2a3cd93ce140f720a9b384280d76d4228a",
+  "quanttide-asset/loops/second-brain-init/tests/test_ui_browser.cjs": "48ac23801bea1545b02550c42007bf9b2da355a0eb01d4e3cbac69de30300fbe"
+}

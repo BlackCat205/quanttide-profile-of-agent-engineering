@@ -1,0 +1,32 @@
+{
+  "evidence_kind": "earlier-tool-observation-transcription",
+  "date": "2026-09-06",
+  "source_commit": "519b4e01c5f7c35f83c2311d093ac4d19ae6f338",
+  "cwd": "profile-repo/quanttide-asset",
+  "binary_path_at_observation": "/tmp/second-brain-asset-cli-build/debug/qtcloud-asset",
+  "config": {
+    "returncode": 0,
+    "registered_assets": 6,
+    "registered_skills": {
+      "second-brain-init": "0.2.0"
+    }
+  },
+  "validate": {
+    "returncode": 0,
+    "total_assets": 5,
+    "passed_assets": 5,
+    "failed_assets": 0,
+    "names": [
+      "loops",
+      ".quanttide",
+      "sessions",
+      "skills",
+      "contexts"
+    ]
+  },
+  "limitations": [
+    "Transcribed from actual earlier tool output, not a newly executed CLI run.",
+    "Temporary binary was absent during evidence-002; final evidence-003 does not run native CLI.",
+    "Native scan and negative fixture are not claimed as verified."
+  ]
+}

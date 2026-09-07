@@ -1,0 +1,83 @@
+assets:
+  contexts:
+    title: 操作上下文
+    type: data
+    category: context
+    audience: 团队成员与维护者
+    path: contexts
+    description: 操作上下文
+    provider: local
+    metadata:
+      path: contexts
+  sessions:
+    title: 公开脱敏对话
+    type: data
+    category: session
+    audience: 团队成员与维护者
+    path: sessions
+    description: 公开脱敏对话
+    provider: local
+    metadata:
+      path: sessions
+  skills:
+    title: 第二大脑技能
+    type: config
+    category: skill
+    audience: 团队成员与维护者
+    path: skills/second-brain-init
+    description: 第二大脑技能
+    provider: local
+    metadata:
+      path: skills/second-brain-init
+  loops:
+    title: 循环运行资料
+    type: config
+    category: loop
+    audience: 团队成员与维护者
+    path: loops/second-brain-init
+    description: 循环运行资料
+    provider: local
+    metadata:
+      path: loops/second-brain-init
+  user_docs:
+    title: 使用说明
+    type: docs
+    category: handbook
+    audience: 团队成员与维护者
+    path: loops/second-brain-init/USER_GUIDE.md
+    description: 使用说明
+    provider: local
+    metadata:
+      path: loops/second-brain-init/USER_GUIDE.md
+  trials:
+    title: 测试记录
+    type: data
+    category: report
+    audience: 团队成员与维护者
+    path: loops/second-brain-init/trials
+    description: 测试记录
+    provider: local
+    metadata:
+      path: loops/second-brain-init/trials
+skills:
+  second-brain-init:
+    version: 0.2.0
+    entrypoint: skills/second-brain-init/scripts/engine.py
+    params:
+      default_mode: plan
+      specification: skills/second-brain-init/assets/specification.yaml
+      bridge: asset-entry.py
+      ui_entrypoint: loops/second-brain-init/ui/app.py
+      ui_version: 0.3.2
+validation:
+  policies:
+  - selector: skills
+    mode: ATOMIC
+    required_categories:
+    - second-brain-init
+  - selector: loops
+    mode: ATOMIC
+    required_categories:
+    - second-brain-init
+  - selector: '**'
+    mode: SCOPED

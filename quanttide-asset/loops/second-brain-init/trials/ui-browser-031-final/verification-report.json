@@ -1,0 +1,143 @@
+{
+  "status": "passed",
+  "at": "2026-09-07T08:11:25.144557+00:00",
+  "plan_id": "5631d9cfa7077a2db04363b5b020045b98a3f3ffdb393648df7898b2bca83427",
+  "provider": "local",
+  "approval_kind": "simulated",
+  "human_acceptance": "not-assessed",
+  "real_github_execution": false,
+  "details": [
+    {
+      "check": "repository",
+      "repo": "qtcloud-sample",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-context-of-sample-engineering",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-intention-of-sample-engineering",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-journal-of-sample-engineering",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-laboratory-of-sample-engineering",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-sample",
+      "passed": true
+    },
+    {
+      "check": "repository",
+      "repo": "quanttide-sample-toolkit",
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "apps/qtcloud-sample",
+        "child": "qtcloud-sample"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "packages/quanttide-sample-toolkit",
+        "child": "quanttide-sample-toolkit"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "examples/default",
+        "child": "quanttide-laboratory-of-sample-engineering"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "data/context",
+        "child": "quanttide-context-of-sample-engineering"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "data/journal",
+        "child": "quanttide-journal-of-sample-engineering"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide-sample",
+        "path": "data/intention",
+        "child": "quanttide-intention-of-sample-engineering"
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "domain",
+        "repo": "quanttide-sample",
+        "directories": [
+          "apps",
+          "packages",
+          "examples",
+          "data/context",
+          "data/archive",
+          "data/report",
+          "data/library",
+          "data/history",
+          "data/journal",
+          "data/profile",
+          "data/brochure",
+          "data/roadmap",
+          "data/insight",
+          "data/intention",
+          "docs/bylaw",
+          "docs/specification",
+          "docs/handbook",
+          "docs/gallery",
+          "docs/tutorial",
+          "docs/essay"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "check": {
+        "kind": "mount",
+        "repo": "quanttide",
+        "child": "quanttide-sample",
+        "path": "domains/quanttide-sample"
+      },
+      "passed": true
+    }
+  ]
+}

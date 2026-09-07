@@ -1,0 +1,372 @@
+{
+  "schema_version": 2,
+  "plugin": "second-brain-init",
+  "version": "0.2.0",
+  "created_at": "2026-09-06T14:14:02.904407+00:00",
+  "scenario": "new-domain",
+  "provider": "local",
+  "organization": "quanttide",
+  "workspace": "/tmp/second-brain-acceptance-o_nq5ai2/workspace",
+  "config": {
+    "schema_version": 1,
+    "scenario": "new-domain",
+    "domain": {
+      "chinese_name": "示例工程",
+      "english_name": "sample-engineering",
+      "short_name": "sample",
+      "overview": "用于验证第二大脑创建流程的本地示例领域。",
+      "boundary": "包含示例资料的组织、验证与维护。",
+      "neighbors": "正式生产领域沿用各自知识仓库；这里仅记录演示材料。"
+    },
+    "root_repo": "quanttide",
+    "register_root": true
+  },
+  "operations": [
+    {
+      "id": "001",
+      "kind": "ensure-repo",
+      "repo": "qtcloud-sample",
+      "allow_create": true,
+      "title": "qtcloud-sample"
+    },
+    {
+      "id": "002",
+      "kind": "finish",
+      "repo": "qtcloud-sample"
+    },
+    {
+      "id": "003",
+      "kind": "ensure-repo",
+      "repo": "quanttide-sample-toolkit",
+      "allow_create": true,
+      "title": "quanttide-sample-toolkit"
+    },
+    {
+      "id": "004",
+      "kind": "finish",
+      "repo": "quanttide-sample-toolkit"
+    },
+    {
+      "id": "005",
+      "kind": "ensure-repo",
+      "repo": "quanttide-laboratory-of-sample-engineering",
+      "allow_create": true,
+      "title": "quanttide-laboratory-of-sample-engineering"
+    },
+    {
+      "id": "006",
+      "kind": "finish",
+      "repo": "quanttide-laboratory-of-sample-engineering"
+    },
+    {
+      "id": "007",
+      "kind": "ensure-repo",
+      "repo": "quanttide-context-of-sample-engineering",
+      "allow_create": true,
+      "title": "quanttide-context-of-sample-engineering"
+    },
+    {
+      "id": "008",
+      "kind": "finish",
+      "repo": "quanttide-context-of-sample-engineering"
+    },
+    {
+      "id": "009",
+      "kind": "ensure-repo",
+      "repo": "quanttide-journal-of-sample-engineering",
+      "allow_create": true,
+      "title": "quanttide-journal-of-sample-engineering"
+    },
+    {
+      "id": "010",
+      "kind": "finish",
+      "repo": "quanttide-journal-of-sample-engineering"
+    },
+    {
+      "id": "011",
+      "kind": "ensure-repo",
+      "repo": "quanttide-intention-of-sample-engineering",
+      "allow_create": true,
+      "title": "quanttide-intention-of-sample-engineering"
+    },
+    {
+      "id": "012",
+      "kind": "finish",
+      "repo": "quanttide-intention-of-sample-engineering"
+    },
+    {
+      "id": "013",
+      "kind": "ensure-repo",
+      "repo": "quanttide-sample",
+      "allow_create": true,
+      "title": "示例工程"
+    },
+    {
+      "id": "014",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "qtcloud-sample",
+      "path": "apps/qtcloud-sample"
+    },
+    {
+      "id": "015",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "quanttide-sample-toolkit",
+      "path": "packages/quanttide-sample-toolkit"
+    },
+    {
+      "id": "016",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "quanttide-laboratory-of-sample-engineering",
+      "path": "examples/default"
+    },
+    {
+      "id": "017",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "quanttide-context-of-sample-engineering",
+      "path": "data/context"
+    },
+    {
+      "id": "018",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "quanttide-journal-of-sample-engineering",
+      "path": "data/journal"
+    },
+    {
+      "id": "019",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "child": "quanttide-intention-of-sample-engineering",
+      "path": "data/intention"
+    },
+    {
+      "id": "020",
+      "kind": "domain-docs",
+      "repo": "quanttide-sample",
+      "domain": {
+        "chinese_name": "示例工程",
+        "english_name": "sample-engineering",
+        "short_name": "sample",
+        "overview": "用于验证第二大脑创建流程的本地示例领域。",
+        "boundary": "包含示例资料的组织、验证与维护。",
+        "neighbors": "正式生产领域沿用各自知识仓库；这里仅记录演示材料。"
+      },
+      "directories": [
+        "apps",
+        "packages",
+        "examples",
+        "data/context",
+        "data/archive",
+        "data/report",
+        "data/library",
+        "data/history",
+        "data/journal",
+        "data/profile",
+        "data/brochure",
+        "data/roadmap",
+        "data/insight",
+        "data/intention",
+        "docs/bylaw",
+        "docs/specification",
+        "docs/handbook",
+        "docs/gallery",
+        "docs/tutorial",
+        "docs/essay"
+      ]
+    },
+    {
+      "id": "021",
+      "kind": "catalog",
+      "repo": "quanttide-sample"
+    },
+    {
+      "id": "022",
+      "kind": "finish",
+      "repo": "quanttide-sample"
+    },
+    {
+      "id": "023",
+      "kind": "ensure-repo",
+      "repo": "quanttide",
+      "allow_create": true,
+      "title": "quanttide"
+    },
+    {
+      "id": "024",
+      "kind": "mount",
+      "repo": "quanttide",
+      "child": "quanttide-sample",
+      "path": "domains/quanttide-sample"
+    },
+    {
+      "id": "025",
+      "kind": "catalog",
+      "repo": "quanttide"
+    },
+    {
+      "id": "026",
+      "kind": "root-index",
+      "repo": "quanttide"
+    },
+    {
+      "id": "027",
+      "kind": "finish",
+      "repo": "quanttide"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "apps/qtcloud-sample",
+      "child": "qtcloud-sample"
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "packages/quanttide-sample-toolkit",
+      "child": "quanttide-sample-toolkit"
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "examples/default",
+      "child": "quanttide-laboratory-of-sample-engineering"
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "data/context",
+      "child": "quanttide-context-of-sample-engineering"
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "data/journal",
+      "child": "quanttide-journal-of-sample-engineering"
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "path": "data/intention",
+      "child": "quanttide-intention-of-sample-engineering"
+    },
+    {
+      "kind": "domain",
+      "repo": "quanttide-sample",
+      "directories": [
+        "apps",
+        "packages",
+        "examples",
+        "data/context",
+        "data/archive",
+        "data/report",
+        "data/library",
+        "data/history",
+        "data/journal",
+        "data/profile",
+        "data/brochure",
+        "data/roadmap",
+        "data/insight",
+        "data/intention",
+        "docs/bylaw",
+        "docs/specification",
+        "docs/handbook",
+        "docs/gallery",
+        "docs/tutorial",
+        "docs/essay"
+      ]
+    },
+    {
+      "kind": "mount",
+      "repo": "quanttide",
+      "child": "quanttide-sample",
+      "path": "domains/quanttide-sample"
+    }
+  ],
+  "names": [
+    "qtcloud-sample",
+    "quanttide",
+    "quanttide-context-of-sample-engineering",
+    "quanttide-intention-of-sample-engineering",
+    "quanttide-journal-of-sample-engineering",
+    "quanttide-laboratory-of-sample-engineering",
+    "quanttide-sample",
+    "quanttide-sample-toolkit"
+  ],
+  "before": {
+    "qtcloud-sample": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-context-of-sample-engineering": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-intention-of-sample-engineering": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-journal-of-sample-engineering": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-laboratory-of-sample-engineering": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-sample": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    },
+    "quanttide-sample-toolkit": {
+      "remote": null,
+      "local": null,
+      "status": null,
+      "rules": {}
+    }
+  },
+  "inspection": {},
+  "engine_sha256": "7190e9a94fab5d653e80ed055f9ce9549d40a85cbcce11bf25933fd977d82d25",
+  "spec_sha256": "447aac48cf4d8a291298ae43d357388f28defb12a405a2d031512518a0194661",
+  "sources": {
+    "context": {
+      "repository": "quanttide/quanttide-profile-of-agent-engineering",
+      "path": "quanttide-asset/contexts/second-brain-init.md",
+      "commit": "2b5666c445237779f179d1e27ad23c08f069980d"
+    },
+    "session": {
+      "repository": "quanttide/quanttide-profile-of-agent-engineering",
+      "path": "quanttide-asset/sessions/second-brain-init.jsonl",
+      "commit": "2b5666c445237779f179d1e27ad23c08f069980d"
+    },
+    "bylaw": {
+      "repository": "quanttide/quanttide-bylaw-of-asset-management",
+      "path": "contract/public-second-brain.md",
+      "commit": "0301294afc35297e2668119eb00248345ff55309"
+    }
+  },
+  "id": "f6f08ad67e7bba5349949ecb1dd7e6b7e384a82dcf475bd524faae76665b8c1b"
+}

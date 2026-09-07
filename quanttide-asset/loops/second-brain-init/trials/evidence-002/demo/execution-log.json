@@ -1,0 +1,333 @@
+{
+  "plan_id": "f6f08ad67e7bba5349949ecb1dd7e6b7e384a82dcf475bd524faae76665b8c1b",
+  "completed": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027"
+  ],
+  "checkpoint": {
+    "qtcloud-sample": {
+      "remote": "59c47473d55b35f6c5a51f4c0ab7b4c361957a56",
+      "local": "59c47473d55b35f6c5a51f4c0ab7b4c361957a56",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/qtcloud-sample.git"
+    },
+    "quanttide": {
+      "remote": "f9a60781d8cf0d77a84cf925fa1ae27c3eb6783a",
+      "local": "f9a60781d8cf0d77a84cf925fa1ae27c3eb6783a",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide.git"
+    },
+    "quanttide-context-of-sample-engineering": {
+      "remote": "94bb78647f5a5e51c0164ba0735cce38fbaa8c05",
+      "local": "94bb78647f5a5e51c0164ba0735cce38fbaa8c05",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-context-of-sample-engineering.git"
+    },
+    "quanttide-intention-of-sample-engineering": {
+      "remote": "5fe9ad76078da1c5015759c01f8d2ee4afbc02a9",
+      "local": "5fe9ad76078da1c5015759c01f8d2ee4afbc02a9",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-intention-of-sample-engineering.git"
+    },
+    "quanttide-journal-of-sample-engineering": {
+      "remote": "c76f90feafe82e90a5770e3046a7230c4d7c4b53",
+      "local": "c76f90feafe82e90a5770e3046a7230c4d7c4b53",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-journal-of-sample-engineering.git"
+    },
+    "quanttide-laboratory-of-sample-engineering": {
+      "remote": "1576ec065260949042c39aa21f63ffaea1bb2ea1",
+      "local": "1576ec065260949042c39aa21f63ffaea1bb2ea1",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-laboratory-of-sample-engineering.git"
+    },
+    "quanttide-sample": {
+      "remote": "2ee200164756b401807cfe682e1e3c89f9a1937a",
+      "local": "2ee200164756b401807cfe682e1e3c89f9a1937a",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample.git"
+    },
+    "quanttide-sample-toolkit": {
+      "remote": "cd87e93829346031a78f5f967e0918e78d7e77f6",
+      "local": "cd87e93829346031a78f5f967e0918e78d7e77f6",
+      "status": "",
+      "rules": {
+        "AGENTS.md": "",
+        ".quanttide/agent/contract.yaml": "",
+        ".quanttide/docs/contract.yaml": "",
+        ".quanttide/asset/contract.yaml": ""
+      },
+      "branch": "main",
+      "origin": "/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample-toolkit.git"
+    }
+  },
+  "events": [
+    {
+      "op": "001",
+      "kind": "ensure-repo",
+      "repo": "qtcloud-sample",
+      "at": "2026-09-06T14:14:03.074745+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "002",
+      "kind": "finish",
+      "repo": "qtcloud-sample",
+      "at": "2026-09-06T14:14:03.093642+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "003",
+      "kind": "ensure-repo",
+      "repo": "quanttide-sample-toolkit",
+      "at": "2026-09-06T14:14:03.169384+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "004",
+      "kind": "finish",
+      "repo": "quanttide-sample-toolkit",
+      "at": "2026-09-06T14:14:03.200486+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "005",
+      "kind": "ensure-repo",
+      "repo": "quanttide-laboratory-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.272043+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "006",
+      "kind": "finish",
+      "repo": "quanttide-laboratory-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.311205+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "007",
+      "kind": "ensure-repo",
+      "repo": "quanttide-context-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.393274+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "008",
+      "kind": "finish",
+      "repo": "quanttide-context-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.441604+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "009",
+      "kind": "ensure-repo",
+      "repo": "quanttide-journal-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.529591+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "010",
+      "kind": "finish",
+      "repo": "quanttide-journal-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.590174+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "011",
+      "kind": "ensure-repo",
+      "repo": "quanttide-intention-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.688895+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "012",
+      "kind": "finish",
+      "repo": "quanttide-intention-of-sample-engineering",
+      "at": "2026-09-06T14:14:03.754968+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "013",
+      "kind": "ensure-repo",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:03.861260+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "014",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:03.976001+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "015",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.095223+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "016",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.214989+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "017",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.340301+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "018",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.468154+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "019",
+      "kind": "mount",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.598894+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "020",
+      "kind": "domain-docs",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.701291+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "021",
+      "kind": "catalog",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.803921+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "022",
+      "kind": "finish",
+      "repo": "quanttide-sample",
+      "at": "2026-09-06T14:14:04.952267+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "023",
+      "kind": "ensure-repo",
+      "repo": "quanttide",
+      "at": "2026-09-06T14:14:05.081538+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "024",
+      "kind": "mount",
+      "repo": "quanttide",
+      "at": "2026-09-06T14:14:05.221740+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "025",
+      "kind": "catalog",
+      "repo": "quanttide",
+      "at": "2026-09-06T14:14:05.318929+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "026",
+      "kind": "root-index",
+      "repo": "quanttide",
+      "at": "2026-09-06T14:14:05.415100+00:00",
+      "status": "passed"
+    },
+    {
+      "op": "027",
+      "kind": "finish",
+      "repo": "quanttide",
+      "at": "2026-09-06T14:14:05.543486+00:00",
+      "status": "passed"
+    }
+  ],
+  "approval_kind": "simulated",
+  "provider": "local",
+  "status": "completed",
+  "elapsed_seconds": 2.777
+}

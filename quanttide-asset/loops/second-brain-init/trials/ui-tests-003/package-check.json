@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "archive_bytes": 1980265,
+  "sha256": "bc653040dfd8a3119d5e95a0904b626757400aae9d1078f53142e3a840ae028b",
+  "checks": [
+    "ZIP CRC and paths",
+    "Windows launcher CRLF retained",
+    "Extracted package contract check",
+    "Launch from path with spaces outside source repository",
+    "Authenticated API version 0.3.0",
+    "Chinese HTML served"
+  ],
+  "tested_on": "Linux; not a Windows execution test"
+}

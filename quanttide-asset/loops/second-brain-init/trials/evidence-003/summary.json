@@ -1,0 +1,121 @@
+{
+  "started_at": "2026-09-06T14:14:48.936928+00:00",
+  "status": "passed",
+  "provider": "local",
+  "human_feedback": "simulated",
+  "human_acceptance": "not-tested",
+  "real_github": "not-tested",
+  "commands": [
+    {
+      "name": "unit-tests",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/tests",
+        "-p",
+        "test_implementation.py",
+        "-v"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "asset-contract",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/asset-entry.py",
+        "check"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "demo-plan",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/asset-entry.py",
+        "run",
+        "plan",
+        "--config",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/configs/new-domain.yaml",
+        "--workspace",
+        "/tmp/second-brain-acceptance-jzwyzr4k/workspace",
+        "--run-dir",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/trials/evidence-003/demo"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "demo-approve",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/asset-entry.py",
+        "run",
+        "approve",
+        "--run-dir",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/trials/evidence-003/demo",
+        "--reviewer",
+        "automated-local-trial",
+        "--accept",
+        "3bbaa5a37e5a772d85b552ce446db201f88a478b91d586cfbac256a8a73881fb",
+        "--simulated"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "demo-apply",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/asset-entry.py",
+        "run",
+        "apply",
+        "--run-dir",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/trials/evidence-003/demo"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "demo-verify",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/asset-entry.py",
+        "run",
+        "verify",
+        "--run-dir",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/trials/evidence-003/demo"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    },
+    {
+      "name": "package-and-run",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/skills/second-brain-init/scripts/validate_outputs.py",
+        "--run-dir",
+        "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset/loops/second-brain-init/trials/evidence-003/demo"
+      ],
+      "cwd": "/workspace/scratch/00918c92fe48/profile-repo/quanttide-asset",
+      "returncode": 0
+    }
+  ],
+  "demo": {
+    "repositories": 8,
+    "operations": 27,
+    "checks": 16,
+    "status": "passed",
+    "approval_kind": "simulated",
+    "workspace_retained": false
+  },
+  "native": {
+    "status": "not-tested",
+    "reason": "No --native-cli supplied"
+  },
+  "finished_at": "2026-09-06T14:15:24.331869+00:00"
+}

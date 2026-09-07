@@ -1,0 +1,15 @@
+{
+  ".quanttide/asset/contract.yaml": "142ea5da1314454d22adcdf4569126f872348089956e34f0bb50a4cf915f0a67",
+  "asset-entry.py": "eedac02379db0512b92292eb1f60285c3e7a3a090bd2e04a6f00ba10371fa56b",
+  "loops/second-brain-init/install.py": "159e8a4d8be7c756614e4be5dc9f8bd92bfef5fc13a2e5a64172d689aa7a34af",
+  "loops/second-brain-init/requirements.txt": "b4603b9468ade4d639d2c6f73b89d50e1fa5d227c73ab15be0382cca478513e6",
+  "loops/second-brain-init/tests/run_acceptance.py": "48adb79cec2a2542ec0cd9b3a30b5757fb7d6a12eea177c264972338eaa8aec5",
+  "loops/second-brain-init/tests/test_implementation.py": "c917a629e83794422a75fb4b794a5c0733663c9e29d12c80b17f843aecda0f08",
+  "skills/second-brain-init/SKILL.md": "b5b06ab891610f010897d64965dcf5c8d868fc1e5ab36eb11f443e39b578a740",
+  "skills/second-brain-init/assets/specification.yaml": "447aac48cf4d8a291298ae43d357388f28defb12a405a2d031512518a0194661",
+  "skills/second-brain-init/references/contract-rules.md": "53ab0c7e47d9cb15e446fc1e3af94cc6771fdabdd4efbde86a1af9a52c2c82a0",
+  "skills/second-brain-init/references/request-schema.md": "60e4d8bc8c68beda6e99f89064f59566ca8f57590415c31ec9cc3d5fbededa74",
+  "skills/second-brain-init/references/scenarios.md": "19b83862c880a593e715f2bbb2e993e2f6c7f05bd58acca8136ebd35d981f1bb",
+  "skills/second-brain-init/scripts/engine.py": "7190e9a94fab5d653e80ed055f9ce9549d40a85cbcce11bf25933fd977d82d25",
+  "skills/second-brain-init/scripts/validate_outputs.py": "d1965112ac57e6f9f8b067b612ed5d8f61351c447d3373421e77535f4b20569b"
+}

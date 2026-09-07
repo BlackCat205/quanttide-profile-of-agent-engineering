@@ -1,0 +1,223 @@
+name: second-brain-init
+version: 0.2.0
+description: 领域第二大脑初始化与维护循环
+entry: 用户提出创建或维护第二大脑的意图
+exit: 用户收到经过校验的结果报告
+sources:
+  context:
+    repository: quanttide/quanttide-profile-of-agent-engineering
+    path: quanttide-asset/contexts/second-brain-init.md
+    commit: 2b5666c445237779f179d1e27ad23c08f069980d
+  session:
+    repository: quanttide/quanttide-profile-of-agent-engineering
+    path: quanttide-asset/sessions/second-brain-init.jsonl
+    commit: 2b5666c445237779f179d1e27ad23c08f069980d
+  bylaw:
+    repository: quanttide/quanttide-bylaw-of-asset-management
+    path: contract/public-second-brain.md
+    commit: 0301294afc35297e2668119eb00248345ff55309
+scenarios:
+  new-domain:
+    title: 新建领域
+    required_inputs:
+    - domain
+  complete-existing:
+    title: 补全领域
+    required_inputs:
+    - target_repo
+    - domain
+  append-assets:
+    title: 追加资产
+    required_inputs:
+    - target_repo
+    - domain
+    - assets
+  mount-product:
+    title: 挂载产品
+    required_inputs:
+    - target_repo
+    - mounts
+  aggregate-container:
+    title: 聚合容器
+    required_inputs:
+    - asset_type
+    - mounts
+  rename:
+    title: 配套资产英文后缀更名
+    required_inputs:
+    - renames
+    - reference_repos
+  release:
+    title: 发布版本
+    required_inputs:
+    - target_repo
+    - version
+    - notes
+steps:
+- name: understand
+  actor: human+ai
+  artifact: request.yaml
+  check: AI 调查先例并整理用户认可的场景、命名、领域边界与完整影响清单
+- name: plan
+  actor: engine
+  artifact: execution-plan.json + execution-plan.md
+  check: 调查内容保存在 inspection；计划绑定代码、规格和仓库状态
+- name: confirm
+  actor: human
+  artifact: approval-record.json
+  check: 确认绑定完整计划编号；本地自动化测试明确记录 simulated
+- name: apply
+  actor: engine
+  artifact: execution-log.json
+  check: 逐项执行，检查点恢复，按子仓库到根仓库提交推送
+- name: validate
+  actor: engine
+  artifact: verification-report.json
+  check: 检查工作区、远端 HEAD、目录、文档、子模块和场景结果
+- name: report
+  actor: human+ai
+  artifact: result.md
+  check: 区分程序校验、模拟确认、真实验收与 GitHub 操作；另写人工试用记录
+feedback:
+- after: understand
+  actor: human
+  ask: 确认名称、范围与配置内容；已有明确授权可以沿用。
+- after: plan
+  actor: human
+  ask: 审阅本次具体修改清单；执行器记录该计划的确认。
+safety:
+  default_mode: plan
+  confirmation_required:
+  - remote-create
+  - remote-rename
+  - remote-push
+  - contract-write
+  - production-release
+  forbidden:
+  - 未确认时执行远程写操作
+  - 将凭证或未脱敏材料写入公开仓库
+  - 使用 git add -A
+  - 用模板覆盖成熟仓库内容
+metrics:
+- elapsed_seconds
+- completed_operations
+- verification_passed
+- verification_failed
+initial_assets:
+- platform
+- toolkit
+- example
+- context
+- journal
+- intention
+reserved_names:
+- context
+- archive
+- report
+- library
+- history
+- journal
+- profile
+- brochure
+- roadmap
+- insight
+- intention
+- bylaw
+- specification
+- handbook
+- gallery
+- tutorial
+- essay
+domain_directories:
+- apps
+- packages
+- examples
+- data/context
+- data/archive
+- data/report
+- data/library
+- data/history
+- data/journal
+- data/profile
+- data/brochure
+- data/roadmap
+- data/insight
+- data/intention
+- docs/bylaw
+- docs/specification
+- docs/handbook
+- docs/gallery
+- docs/tutorial
+- docs/essay
+asset_types:
+  context:
+    repo: quanttide-context-of-{english_name}
+    path: data/context
+  archive:
+    repo: quanttide-archive-of-{english_name}
+    path: data/archive
+  report:
+    repo: quanttide-report-of-{english_name}
+    path: data/report
+  library:
+    repo: quanttide-library-of-{english_name}
+    path: data/library
+  history:
+    repo: quanttide-history-of-{english_name}
+    path: data/history
+  journal:
+    repo: quanttide-journal-of-{english_name}
+    path: data/journal
+  profile:
+    repo: quanttide-profile-of-{english_name}
+    path: data/profile
+  brochure:
+    repo: quanttide-brochure-of-{english_name}
+    path: data/brochure
+  roadmap:
+    repo: quanttide-roadmap-of-{english_name}
+    path: data/roadmap
+  insight:
+    repo: quanttide-insight-of-{english_name}
+    path: data/insight
+  intention:
+    repo: quanttide-intention-of-{english_name}
+    path: data/intention
+  bylaw:
+    repo: quanttide-bylaw-of-{english_name}
+    path: docs/bylaw
+  specification:
+    repo: quanttide-specification-of-{english_name}
+    path: docs/specification
+  handbook:
+    repo: quanttide-handbook-of-{english_name}
+    path: docs/handbook
+  gallery:
+    repo: quanttide-gallery-of-{english_name}
+    path: docs/gallery
+  tutorial:
+    repo: quanttide-tutorial-of-{english_name}
+    path: docs/tutorial
+  essay:
+    repo: quanttide-essay-of-{english_name}
+    path: docs/essay
+  platform:
+    repo: qtcloud-{short_name}
+    path: apps/qtcloud-{short_name}
+  toolkit:
+    repo: quanttide-{short_name}-toolkit
+    path: packages/quanttide-{short_name}-toolkit
+  example:
+    repo: quanttide-laboratory-of-{english_name}
+    path: examples/default
+runtime:
+  entrypoint: scripts/engine.py
+  kind: scenario-specific-git-executor
+  python: '>=3.10'
+  dependencies:
+  - PyYAML>=6.0,<7
+  - Git
+  providers:
+  - local
+  - github
+  note: steps 描述本执行器的阶段，不是资产云通用 DAG 调度协议。

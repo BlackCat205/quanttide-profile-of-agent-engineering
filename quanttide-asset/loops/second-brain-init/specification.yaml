@@ -1,0 +1,2 @@
+# 兼容导航文件；可执行配置的唯一事实源在 Skill 内，安装时一并复制。
+include: ../../skills/second-brain-init/assets/specification.yaml

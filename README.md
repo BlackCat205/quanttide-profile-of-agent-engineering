@@ -3,6 +3,12 @@
 本仓库是**跨 Agent 系统配置层**。它集中管理各个 AI 编程工具（Zed、OpenCode、Hermes）的系统级规则、命令、插件，目标是一处维护、多机复用。
 
 
+## 第二大脑创建工具（招聘考核试用版）
+
+直接下载：[完整试用版 ZIP](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.3.2.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
+
+本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。当前 UI 0.3.2 支持命名提示、创建前对照检查、连续创建和结果验收。提交范围与已知限制见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)；真实 GitHub 和资产云联调尚未完成。
+
 ## 目录结构
 
 仓库按**领域**为一级文件夹组织，未归入领域的通用内容存于 `default/`：

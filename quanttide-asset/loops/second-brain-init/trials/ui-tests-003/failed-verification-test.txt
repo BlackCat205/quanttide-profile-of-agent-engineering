@@ -1,0 +1,6 @@
+test_failed_final_verification_still_exposes_readable_report (test_ui.UITests.test_failed_final_verification_still_exposes_readable_report) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 29.635s
+
+OK

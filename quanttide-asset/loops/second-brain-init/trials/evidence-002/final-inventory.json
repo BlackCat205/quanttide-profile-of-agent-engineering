@@ -1,0 +1,72 @@
+{
+  "qtcloud-sample": {
+    "head": "59c47473d55b35f6c5a51f4c0ab7b4c361957a56",
+    "status": "",
+    "remote_head": "59c47473d55b35f6c5a51f4c0ab7b4c361957a56",
+    "files": {
+      "README.md": "# qtcloud-sample\n"
+    }
+  },
+  "quanttide": {
+    "head": "f9a60781d8cf0d77a84cf925fa1ae27c3eb6783a",
+    "status": "",
+    "remote_head": "f9a60781d8cf0d77a84cf925fa1ae27c3eb6783a",
+    "files": {
+      "README.md": "# quanttide\n\n<!-- second-brain-init:catalog:begin -->\n## 资产目录\n\n- [domains/quanttide-sample](domains/quanttide-sample/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample.git。\n<!-- second-brain-init:catalog:end -->\n\n<!-- second-brain-init:domains:begin -->\n## 领域清单\n\n已登记领域数量：1。\n\n- [quanttide-sample](domains/quanttide-sample/)。\n<!-- second-brain-init:domains:end -->\n",
+      "CHANGELOG.md": "# 变更记录\n\n## [Unreleased]\n\n- second-brain-init f6f08ad67e7b：new-domain。\n",
+      ".gitmodules": "[submodule \"domains/quanttide-sample\"]\n\tpath = domains/quanttide-sample\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample.git\n",
+      "domains/README.md": "# 领域目录\n\n<!-- second-brain-init:domains-index:begin -->\n## 目录结构\n\n- domains/quanttide-sample。\n\n## 领域清单\n\n- [quanttide-sample](quanttide-sample/)。\n\n## 领域项目\n\n### quanttide-sample\n\n仓库：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample.git\n<!-- second-brain-init:domains-index:end -->\n"
+    }
+  },
+  "quanttide-context-of-sample-engineering": {
+    "head": "94bb78647f5a5e51c0164ba0735cce38fbaa8c05",
+    "status": "",
+    "remote_head": "94bb78647f5a5e51c0164ba0735cce38fbaa8c05",
+    "files": {
+      "README.md": "# quanttide-context-of-sample-engineering\n"
+    }
+  },
+  "quanttide-intention-of-sample-engineering": {
+    "head": "5fe9ad76078da1c5015759c01f8d2ee4afbc02a9",
+    "status": "",
+    "remote_head": "5fe9ad76078da1c5015759c01f8d2ee4afbc02a9",
+    "files": {
+      "README.md": "# quanttide-intention-of-sample-engineering\n"
+    }
+  },
+  "quanttide-journal-of-sample-engineering": {
+    "head": "c76f90feafe82e90a5770e3046a7230c4d7c4b53",
+    "status": "",
+    "remote_head": "c76f90feafe82e90a5770e3046a7230c4d7c4b53",
+    "files": {
+      "README.md": "# quanttide-journal-of-sample-engineering\n"
+    }
+  },
+  "quanttide-laboratory-of-sample-engineering": {
+    "head": "1576ec065260949042c39aa21f63ffaea1bb2ea1",
+    "status": "",
+    "remote_head": "1576ec065260949042c39aa21f63ffaea1bb2ea1",
+    "files": {
+      "README.md": "# quanttide-laboratory-of-sample-engineering\n"
+    }
+  },
+  "quanttide-sample": {
+    "head": "2ee200164756b401807cfe682e1e3c89f9a1937a",
+    "status": "",
+    "remote_head": "2ee200164756b401807cfe682e1e3c89f9a1937a",
+    "files": {
+      "README.md": "# 示例工程\n\n<!-- second-brain-init:domain:begin -->\n## 概述\n\n用于验证第二大脑创建流程的本地示例领域。\n\n## 领域边界\n\n包含示例资料的组织、验证与维护。\n\n## 相邻领域分工\n\n正式生产领域沿用各自知识仓库；这里仅记录演示材料。\n<!-- second-brain-init:domain:end -->\n\n<!-- second-brain-init:license:begin -->\n## 许可\n\n见 [LICENSE](LICENSE)。已有仓库沿用原有许可。\n<!-- second-brain-init:license:end -->\n\n<!-- second-brain-init:catalog:begin -->\n## 资产目录\n\n- [apps/qtcloud-sample](apps/qtcloud-sample/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/qtcloud-sample.git。\n- [data/context](data/context/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-context-of-sample-engineering.git。\n- [data/intention](data/intention/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-intention-of-sample-engineering.git。\n- [data/journal](data/journal/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-journal-of-sample-engineering.git。\n- [examples/default](examples/default/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-laboratory-of-sample-engineering.git。\n- [packages/quanttide-sample-toolkit](packages/quanttide-sample-toolkit/)：/tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample-toolkit.git。\n<!-- second-brain-init:catalog:end -->\n",
+      "LICENSE": "Creative Commons Attribution 4.0 International (CC BY 4.0)\n\nThis work is licensed under CC BY 4.0.\nhttps://creativecommons.org/licenses/by/4.0/legalcode\n",
+      "CHANGELOG.md": "# 变更记录\n\n## [Unreleased]\n\n- second-brain-init f6f08ad67e7b：new-domain。\n\n## [0.1.0]\n\n- 初始化领域第二大脑。\n",
+      ".gitmodules": "[submodule \"apps/qtcloud-sample\"]\n\tpath = apps/qtcloud-sample\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/qtcloud-sample.git\n[submodule \"packages/quanttide-sample-toolkit\"]\n\tpath = packages/quanttide-sample-toolkit\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-sample-toolkit.git\n[submodule \"examples/default\"]\n\tpath = examples/default\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-laboratory-of-sample-engineering.git\n[submodule \"data/context\"]\n\tpath = data/context\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-context-of-sample-engineering.git\n[submodule \"data/journal\"]\n\tpath = data/journal\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-journal-of-sample-engineering.git\n[submodule \"data/intention\"]\n\tpath = data/intention\n\turl = /tmp/second-brain-acceptance-o_nq5ai2/workspace/remotes/quanttide-intention-of-sample-engineering.git\n"
+    }
+  },
+  "quanttide-sample-toolkit": {
+    "head": "cd87e93829346031a78f5f967e0918e78d7e77f6",
+    "status": "",
+    "remote_head": "cd87e93829346031a78f5f967e0918e78d7e77f6",
+    "files": {
+      "README.md": "# quanttide-sample-toolkit\n"
+    }
+  }
+}

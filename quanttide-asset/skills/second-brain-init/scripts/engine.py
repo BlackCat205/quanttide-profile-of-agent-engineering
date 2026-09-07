@@ -1,0 +1,693 @@
+#!/usr/bin/env python3
+"""Confirmed, resumable Git workflow. No shell command strings are evaluated."""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+import yaml
+
+VERSION = '0.2.0'
+SKILL = Path(__file__).resolve().parents[1]
+SPEC = SKILL / 'assets' / 'specification.yaml'
+SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+CC = 'Creative Commons Attribution 4.0 International (CC BY 4.0)\n\nThis work is licensed under CC BY 4.0.\nhttps://creativecommons.org/licenses/by/4.0/legalcode\n'
+APACHE = 'Apache License, Version 2.0\n\nLicensed under the Apache License, Version 2.0 (the "License");\nyou may not use this work except in compliance with the License.\nYou may obtain a copy of the License at\n\n    https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an "AS IS" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n'
+
+class WorkflowError(Exception):
+    pass
+
+def require(condition, message):
+    if not condition:
+        raise WorkflowError(message)
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+def save(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + '.tmp')
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    temp.replace(path)
+
+def read_json(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+def read_yaml(path):
+    value = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+    require(isinstance(value, dict), '配置必须为 YAML 对象。')
+    return value
+
+def slug(value):
+    require(isinstance(value, str) and len(value) < 100 and bool(SLUG.fullmatch(value)), f'非法名称：{value!r}')
+    return value
+
+def safe_path(base, relative):
+    require(isinstance(relative, str) and '\\' not in relative, '路径须使用 / 分隔。')
+    p = PurePosixPath(relative)
+    require(not p.is_absolute() and all(s not in ('..', '.', '.git') for s in p.parts) and bool(p.parts), '路径不能越界或包含 .git。')
+    target = Path(base).joinpath(*p.parts)
+    current = Path(base)
+    require(not current.is_symlink(), '工作区不能是符号链接。')
+    for part in p.parts:
+        current = current / part
+        require(not current.is_symlink(), f'拒绝符号链接路径：{relative}')
+    require(target.resolve().is_relative_to(Path(base).resolve()), '路径超出工作区。')
+    return target
+
+def command(argv, cwd=None, check=True):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='Never')
+    try:
+        result = subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+    except FileNotFoundError:
+        raise WorkflowError(f'找不到 {argv[0]}，请按使用说明安装。') from None
+    except subprocess.TimeoutExpired:
+        raise WorkflowError(f'{argv[0]} 超时；已暂停，请检查连接后恢复。') from None
+    if check and result.returncode:
+        # Do not put provider output / authentication details in persisted logs.
+        raise WorkflowError(f'{argv[0]} {argv[1] if len(argv)>1 else ""} 失败（退出码 {result.returncode}）。请在目标仓库人工检查权限或 Git 状态。')
+    return result
+
+def git(path, *args, check=True):
+    return command(['git', '-c', 'core.autocrlf=false', *args], cwd=path, check=check)
+
+def text_at(repo, name):
+    path = safe_path(repo, name)
+    return path.read_text(encoding='utf-8') if path.is_file() else ''
+
+def modules(repo):
+    if not (repo / '.gitmodules').is_file():
+        return {}
+    raw = git(repo, 'config', '-f', '.gitmodules', '--get-regexp', r'^submodule\..*\.path$', check=False).stdout
+    result = {}
+    for line in raw.splitlines():
+        key, path = line.split(' ', 1)
+        url = git(repo, 'config', '-f', '.gitmodules', '--get', key[:-4]+'url').stdout.strip()
+        result[path] = {'url': url, 'key': key[:-4]}
+    return result
+
+class Provider:
+    def __init__(self, workspace, kind='local', organization='quanttide'):
+        self.workspace = Path(workspace).resolve()
+        self.kind = kind
+        self.organization = slug(organization)
+        require(kind in ('local', 'github'), 'provider 只能为 local 或 github。')
+
+    def repo(self, name):
+        return safe_path(self.workspace, 'repositories/' + slug(name))
+
+    def remote(self, name):
+        if self.kind == 'local':
+            return str(safe_path(self.workspace, 'remotes/' + slug(name) + '.git'))
+        return f'https://github.com/{self.organization}/{slug(name)}.git'
+
+    def info(self, name):
+        if self.kind == 'local':
+            remote = Path(self.remote(name))
+            return {'exists': remote.is_dir(), 'branch': 'main', 'visibility': 'local'}
+        result = command(['gh', 'api', f'repos/{self.organization}/{slug(name)}'], check=False)
+        if result.returncode:
+            require('(HTTP 404)' in result.stderr, f'无法读取 {name}；网络、登录或权限错误，不能当作仓库不存在。')
+            return {'exists': False, 'branch': 'main', 'visibility': 'public'}
+        data = json.loads(result.stdout)
+        require(data.get('visibility') == 'public', '本插件仅处理公开第二大脑；检测到非公开仓库。')
+        return {'exists': True, 'branch': data['default_branch'], 'visibility': 'public'}
+
+    def head(self, name):
+        info = self.info(name)
+        if not info['exists']:
+            return None
+        raw = command(['git', 'ls-remote', self.remote(name), 'refs/heads/'+info['branch']]).stdout.strip()
+        return raw.split()[0] if raw else None
+
+    def ensure(self, name, allow_create, title):
+        path = self.repo(name)
+        info = self.info(name)
+        if not info['exists']:
+            require(allow_create, f'仓库 {name} 不存在。')
+            if self.kind == 'local':
+                remote = Path(self.remote(name))
+                remote.parent.mkdir(parents=True, exist_ok=True)
+                command(['git', 'init', '--bare', '--initial-branch=main', remote])
+            else:
+                command(['gh', 'api', '--method', 'POST', f'orgs/{self.organization}/repos', '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            command(['git', 'clone', self.remote(name), path])
+        require((path / '.git').exists(), f'{path} 不是 Git 仓库。')
+        if self.kind == 'local':
+            git(path, 'config', 'user.name', 'Second Brain Local Test')
+            git(path, 'config', 'user.email', 'second-brain@example.invalid')
+        if not git(path, 'rev-parse', '--verify', 'HEAD', check=False).returncode == 0:
+            require(allow_create, f'{name} 没有初始提交。')
+            (path/'README.md').write_text('# '+title+'\n', encoding='utf-8')
+            git(path, 'add', '--', 'README.md')
+            git(path, 'commit', '-m', 'feat(asset): 初始化仓库')
+            git(path, 'push', '-u', 'origin', 'HEAD:main')
+
+    def rename(self, old, new):
+        old_path, new_path = self.repo(old), self.repo(new)
+        require(not self.info(new)['exists'] and not new_path.exists(), '更名目标已存在。')
+        if self.kind == 'local':
+            Path(self.remote(old)).rename(self.remote(new))
+        else:
+            command(['gh', 'api', '--method', 'PATCH', f'repos/{self.organization}/{old}', '-f', 'name='+new])
+        old_path.rename(new_path)
+        git(new_path, 'remote', 'set-url', 'origin', self.remote(new))
+
+
+def snapshot(provider, names, strict=False):
+    result = {}
+    for name in sorted(set(names)):
+        path = provider.repo(name)
+        item = {'remote': provider.head(name), 'local': None, 'status': None, 'rules': {}}
+        if path.exists():
+            require((path/'.git').exists(), f'已有目录不是仓库：{name}')
+            item['local'] = git(path, 'rev-parse', 'HEAD', check=False).stdout.strip()
+            item['status'] = git(path, 'status', '--porcelain=v1', '--untracked-files=all').stdout
+            item['branch'] = git(path, 'symbolic-ref', '--quiet', '--short', 'HEAD', check=False).stdout.strip()
+            item['origin'] = git(path, 'remote', 'get-url', 'origin', check=False).stdout.strip()
+            for p in ['AGENTS.md', '.quanttide/agent/contract.yaml', '.quanttide/docs/contract.yaml', '.quanttide/asset/contract.yaml']:
+                item['rules'][p] = text_at(path, p)
+            if strict:
+                require(not item['status'], f'{name} 有未提交修改，先处理再生成计划。')
+                require(bool(item['branch']), f'{name} 处于 detached HEAD，请先切换分支。')
+                require(item['origin'] == provider.remote(name), f'{name} 的 origin 与目标不符。')
+                require(item['local'] == item['remote'], f'{name} 与远端不同步，请先处理。')
+        result[name] = item
+    return result
+
+
+def asset_map(domain, spec):
+    return {key: {'repo': rule['repo'].format(**domain), 'path': rule['path'].format(**domain)} for key, rule in spec['asset_types'].items()}
+
+def content_block(text, key, body):
+    begin, end = f'<!-- second-brain-init:{key}:begin -->', f'<!-- second-brain-init:{key}:end -->'
+    block = begin+'\n'+body.rstrip()+'\n'+end
+    if begin in text:
+        require(end in text, '托管文档标记不完整。')
+        start, stop = text.index(begin), text.index(end)+len(end)
+        return text[:start]+block+text[stop:]
+    return text.rstrip()+'\n\n'+block+'\n'
+
+def validate_config(cfg, spec):
+    require(cfg.get('scenario') in spec['scenarios'], '请明确选择 scenario，支持范围见示例。')
+    require(cfg.get('schema_version') == 1, 'schema_version 必须为 1。')
+    scenario = cfg['scenario']
+    known = {'schema_version','scenario','domain','target_repo','asset_type','assets','mounts','root_repo','register_root','renames','reference_repos','version','notes'}
+    require(not set(cfg)-known, '未知配置字段：'+', '.join(sorted(set(cfg)-known)))
+    require(isinstance(cfg.get('register_root', True), bool), 'register_root 必须为布尔值。')
+    for field in spec['scenarios'][scenario]['required_inputs']:
+        require(bool(cfg.get(field)), f'缺少输入 {field}，请补充后重试。')
+    if scenario in ('new-domain', 'complete-existing', 'append-assets'):
+        domain = cfg['domain']
+        require(isinstance(domain, dict), 'domain 必须是对象。')
+        for key in ('chinese_name','english_name','short_name','overview','boundary','neighbors'):
+            require(isinstance(domain.get(key), str) and bool(domain[key].strip()), f'domain 缺少 {key}。')
+            require('\x00' not in domain[key] and '\r' not in domain[key], '领域文字含非法字符。')
+        slug(domain['english_name']); slug(domain['short_name'])
+        require('\n' not in domain['chinese_name'], '中文名须为单行。')
+        require(domain['short_name'] not in spec['reserved_names'], '领域简称与资产类型容器冲突。')
+    if scenario == 'append-assets':
+        require(isinstance(cfg['assets'], list) and all(isinstance(k, str) for k in cfg['assets']), 'assets 必须是资产类型名称列表。')
+        require(len(set(cfg['assets'])) == len(cfg['assets']), 'assets 不能重复。')
+    if scenario == 'aggregate-container':
+        require(cfg['asset_type'] in spec['reserved_names'], '未知资产容器类型。')
+    require(isinstance(cfg.get('mounts', []), list), 'mounts 必须是列表。')
+    for m in cfg.get('mounts', []):
+        require(isinstance(m, dict) and set(m) == {'repo','path'}, 'mounts 每项只包含 repo 和 path。')
+        slug(m['repo']); safe_path(Path('/tmp'), m['path'])
+        if scenario == 'mount-product':
+            require(m['path'] == 'apps/'+m['repo'], '产品挂载路径必须为 apps/仓库名。')
+        if scenario == 'aggregate-container':
+            require(m['path'].startswith(('domains/','default/')), '容器路径必须位于 domains 或 default。')
+            require(m['repo'].startswith('quanttide-'+cfg['asset_type']+'-of-'), '容器中仓库类型不匹配。')
+    if scenario == 'rename':
+        require(isinstance(cfg['renames'], dict), 'renames 应为旧仓库名到新仓库名的映射。')
+        for old, new in cfg['renames'].items():
+            slug(old); slug(new)
+            require(old != new and old.startswith('quanttide-') and new.startswith('quanttide-') and '-of-' in old and '-of-' in new, '英文更名需完整且不同的配套资产仓库名（含 -of-）。')
+            require(old.split('-of-')[0]==new.split('-of-')[0], '更名不能改变资产类型。')
+        require(not set(cfg['renames']) & set(cfg['renames'].values()), '不支持循环或链式更名。')
+        require(len(set(cfg['renames'].values())) == len(cfg['renames']), '更名目标重复。')
+    if scenario == 'release':
+        require(isinstance(cfg['notes'], str) and bool(cfg['notes'].strip()), 'notes 必须是非空文字。')
+        require(bool(re.fullmatch(r'\d+\.\d+\.\d+', str(cfg['version']))), '版本必须是 X.Y.Z。')
+    return cfg
+
+
+def make_plan(config, workspace, run_dir, provider_kind='local', organization='quanttide'):
+    spec = read_yaml(SPEC)
+    cfg = validate_config(read_yaml(config), spec)
+    work, run = Path(workspace).resolve(), Path(run_dir).resolve()
+    require(not work.is_relative_to(run) and not run.is_relative_to(work), '运行记录目录与目标工作区必须分开。')
+    require(not (run/'execution-plan.json').exists(), '运行记录已存在，请使用新的运行目录。')
+    require(shutil.which('git'), '需要安装 Git。')
+    if provider_kind == 'github':
+        require(shutil.which('gh'), 'GitHub 模式需要 GitHub CLI 和已登录账号。')
+        command(['gh','auth','status'])
+    provider = Provider(work, provider_kind, organization)
+    scenario = cfg['scenario']
+    domain = cfg.get('domain', {})
+    target = cfg.get('target_repo') or ('quanttide-'+domain['short_name'] if domain else 'quanttide-'+cfg.get('asset_type','profile'))
+    root = slug(cfg.get('root_repo','quanttide'))
+    slug(target)
+    require(target != root, '领域或资产容器不能与根仓库相同。')
+    register = cfg.get('register_root', True) and scenario not in ('rename','release')
+    ops, checks, names = [], [], set()
+    def add(kind, repo, **kwargs):
+        names.add(slug(repo))
+        ops.append(dict(id=f'{len(ops)+1:03}', kind=kind, repo=repo, **kwargs))
+    def ensure(name, allow, title=None):
+        add('ensure-repo', name, allow_create=allow, title=title or name)
+    def finish(name):
+        add('finish', name)
+    mounts = list(cfg.get('mounts', []))
+    if scenario == 'new-domain':
+        mapping = asset_map(domain, spec)
+        mounts = [mapping[k] for k in spec['initial_assets']]
+    if scenario == 'append-assets':
+        require(all(k in spec['asset_types'] for k in cfg['assets']), 'assets 包含未知资产类型。')
+        mounts = [asset_map(domain, spec)[k] for k in cfg['assets']]
+    if scenario not in ('rename','release'):
+        require(all(m['repo'] not in (target, root) for m in mounts), '不能自挂载或形成根仓库循环。')
+        require(len({m['path'] for m in mounts})==len(mounts), '挂载路径重复。')
+        for m in mounts:
+            ensure(m['repo'], scenario in ('new-domain','append-assets'))
+            finish(m['repo'])
+        ensure(target, scenario in ('new-domain','aggregate-container'), domain.get('chinese_name', target))
+        for m in mounts:
+            add('mount', target, child=m['repo'], path=m['path'])
+            checks.append({'kind':'mount','repo':target, 'path':m['path'], 'child':m['repo']})
+        if scenario in ('new-domain','complete-existing'):
+            add('domain-docs', target, domain=domain, directories=spec['domain_directories'])
+            checks.append({'kind':'domain','repo':target,'directories':spec['domain_directories']})
+        elif scenario == 'aggregate-container':
+            add('container-docs', target, asset_type=cfg['asset_type'])
+        add('catalog', target)
+        finish(target)
+        if register:
+            ensure(root, provider_kind == 'local')
+            path = ('assets/' if scenario == 'aggregate-container' else 'domains/')+target
+            add('mount', root, child=target, path=path)
+            checks.append({'kind':'mount','repo':root,'child':target,'path':path})
+            add('catalog', root)
+            add('root-index', root)
+            finish(root)
+    elif scenario == 'rename':
+        for old, new in cfg['renames'].items():
+            ensure(old, False)
+            add('rename-repo', old, new_name=new)
+            names.add(new)
+        references = cfg['reference_repos']
+        require(isinstance(references, list) and bool(references), 'reference_repos 需列出领域和根仓库。')
+        for name in references:
+            ensure(name, False)
+        ordered = list(cfg['renames'].values()) + references
+        for name in ordered:
+            add('replace-references', name, renames=cfg['renames'])
+            add('refresh-mounts', name)
+            finish(name)
+        checks.append({'kind':'no-old-references','repos':ordered,'old_names':list(cfg['renames'])})
+    else:
+        ensure(target, False)
+        add('release-notes', target, version=str(cfg['version']), notes=cfg['notes'])
+        finish(target)
+        add('release', target, version=str(cfg['version']), notes=cfg['notes'])
+        checks.append({'kind':'tag','repo':target,'version':str(cfg['version'])})
+    initial = snapshot(provider, names, strict=True)
+    for op in ops:
+        if op['kind'] == 'ensure-repo':
+            require(op['allow_create'] or initial[op['repo']]['remote'], f'已有仓库场景要求远端存在：{op["repo"]}')
+        if op['kind'] == 'rename-repo':
+            require(not initial[op['new_name']]['remote'] and not initial[op['new_name']]['local'], '更名目标已经存在。')
+    # Read-only materialization of remote README/rules for review is a clone into run_dir, not the target workspace.
+    inspection = {}
+    for name in sorted(names):
+        state = initial[name]
+        if not state['remote']:
+            continue
+        src = provider.repo(name)
+        if not src.exists():
+            src = run/'inspection'/name
+            src.parent.mkdir(parents=True, exist_ok=True)
+            command(['git','clone','--depth','1',provider.remote(name),src])
+        inspection[name] = {p: text_at(src,p) for p in ['README.md','AGENTS.md','.gitmodules','.quanttide/agent/contract.yaml','.quanttide/docs/contract.yaml','.quanttide/asset/contract.yaml']}
+        if scenario == 'new-domain' and name == target:
+            require('second-brain-init:domain:begin' in inspection[name]['README.md'], '同名领域已存在；请使用 complete-existing 调查补全，不能按新建处理。')
+    plan = dict(schema_version=2, plugin='second-brain-init', version=VERSION, created_at=now(), scenario=scenario,
+                provider=provider_kind, organization=organization, workspace=str(work), config=cfg,
+                operations=ops, checks=checks, names=sorted(names), before=initial, inspection=inspection,
+                engine_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), spec_sha256=hashlib.sha256(SPEC.read_bytes()).hexdigest(), sources=spec['sources'])
+    plan['id'] = digest(plan)
+    save(run/'execution-plan.json', plan)
+    lines = ['# 第二大脑执行计划','','状态：等待人工确认。','',f'计划编号：{plan["id"]}', '',f'执行环境：{provider_kind}', '', '## 已确认的输入','', '```yaml',yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False).rstrip(),'```','','## 操作清单','']
+    for op in ops:
+        lines.append(f'- {op["id"]} {op["kind"]}：{op["repo"]}'+(f' → {op["path"]}' if 'path' in op else '')+'。')
+    lines += ['','## 执行与审阅','','本计划包含建仓、文件写入、提交与推送。local 模式仅操作指定工作区内的本地仓库；github 模式将操作公开 GitHub 仓库。', '', '请检查 execution-plan.json 的 inspection 中的原有契约及 config 中的名称、边界和挂载目标。确认后运行 approve，修改输入则新建一份计划。','']
+    (run/'execution-plan.md').write_text('\n'.join(lines), encoding='utf-8')
+    return plan
+
+
+def load_plan(run):
+    plan = read_json(Path(run)/'execution-plan.json')
+    expected = plan.pop('id')
+    require(digest(plan) == expected, '计划内容已变化，请重新生成并确认。')
+    plan['id'] = expected
+    require(plan['engine_sha256'] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), '执行器版本已变化，请重新生成计划。')
+    require(plan['spec_sha256'] == hashlib.sha256(SPEC.read_bytes()).hexdigest(), '配置规格已变化，请重新生成计划。')
+    return plan
+
+def approve(run, reviewer, accepted_id=None, simulated=False):
+    plan = load_plan(run)
+    require(bool(reviewer.strip()), '需要填写审阅者。')
+    if accepted_id is None:
+        print(Path(run,'execution-plan.md').read_text(encoding='utf-8'))
+        accepted_id = input('确认后输入完整计划编号（回车取消）：').strip()
+    require(accepted_id == plan['id'], '未确认这份计划。')
+    require(not simulated or plan['provider']=='local', '模拟反馈只能用于 local 测试。')
+    record = {'plan_id':plan['id'], 'reviewer':reviewer, 'at':now(), 'simulated':simulated, 'accepted':True}
+    save(Path(run)/'approval-record.json', record)
+    return record
+
+class Executor:
+    def __init__(self, plan):
+        self.plan = plan
+        self.provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
+        self.changed = {}
+
+    def write(self, repo, name, content, missing_only=False):
+        path = safe_path(repo, name)
+        if path.exists() and (missing_only or path.read_text(encoding='utf-8') == content):
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+        self.changed.setdefault(repo.name,set()).add(name)
+
+    def block(self, repo, path, key, body):
+        self.write(repo, path, content_block(text_at(repo,path),key,body))
+
+    def refresh(self, repo, mount_path, url):
+        path = safe_path(repo,mount_path)
+        git(repo,'-c','protocol.file.allow=always' if self.provider.kind=='local' else 'protocol.file.allow=never','submodule','update','--init','--',mount_path)
+        git(path,'fetch','origin')
+        branch_ref = command(['git','ls-remote','--symref',url,'HEAD']).stdout
+        match = re.search(r'ref: refs/heads/(\S+)\s+HEAD',branch_ref)
+        require(match, '子模块远端默认分支不可识别。')
+        git(path,'checkout','--detach','origin/'+match.group(1))
+        self.changed.setdefault(repo.name,set()).add(mount_path)
+
+    def execute(self, op):
+        provider = self.provider
+        repo = provider.repo(op['repo'])
+        kind = op['kind']
+        if kind == 'ensure-repo':
+            provider.ensure(op['repo'],op['allow_create'],op['title'])
+        elif kind == 'mount':
+            path, url = op['path'], provider.remote(op['child'])
+            existing = modules(repo)
+            if path in existing:
+                require(existing[path]['url']==url, f'{path} 已挂载其他仓库，拒绝覆盖。')
+                self.refresh(repo,path,url)
+            else:
+                location = safe_path(repo,path)
+                if location.is_dir() and sorted(p.name for p in location.iterdir()) == ['.gitkeep']:
+                    git(repo,'rm','--',path+'/.gitkeep')
+                    if location.exists(): location.rmdir()
+                require(not location.exists(), f'{path} 已存在，需人工处理。')
+                git(repo,'-c','protocol.file.allow=always' if provider.kind=='local' else 'protocol.file.allow=never','submodule','add',url,path)
+                self.changed.setdefault(repo.name,set()).update(['.gitmodules',path])
+        elif kind == 'domain-docs':
+            d = op['domain']
+            base = text_at(repo,'README.md') or '# '+d['chinese_name']+'\n'
+            if base.strip() == '# '+repo.name: base='# '+d['chinese_name']+'\n'
+            body = '## 概述\n\n'+d['overview']+'\n\n## 领域边界\n\n'+d['boundary']+'\n\n## 相邻领域分工\n\n'+d['neighbors']
+            # Existing human sections remain intact; generated block is the only managed part.
+            if 'second-brain-init:domain:begin' not in base:
+                parts=[('概述',d['overview']),('领域边界',d['boundary']),('相邻领域分工',d['neighbors'])]
+                body='\n\n'.join('## '+heading+'\n\n'+value for heading,value in parts if '## '+heading not in base)
+            if body: self.write(repo,'README.md',content_block(base,'domain',body))
+            self.write(repo,'LICENSE',CC,missing_only=True)
+            if '## 许可' not in text_at(repo,'README.md'):
+                self.block(repo,'README.md','license','## 许可\n\n见 [LICENSE](LICENSE)。已有仓库沿用原有许可。')
+            for path in op['directories']:
+                location = safe_path(repo,path)
+                if not location.exists():
+                    self.write(repo,path+'/.gitkeep','')
+            self.write(repo,'CHANGELOG.md','# 变更记录\n\n## [Unreleased]\n\n## [0.1.0]\n\n- 初始化领域第二大脑。\n',missing_only=True)
+        elif kind == 'container-docs':
+            self.write(repo,'LICENSE',APACHE,missing_only=True)
+            self.block(repo,'README.md','container','## 聚合范围\n\n按 default 和 domains 汇集 '+op['asset_type']+' 资产。')
+        elif kind == 'catalog':
+            entries = modules(repo)
+            body = '## 资产目录\n\n'+'\n'.join(f'- [{path}]({path}/)：{value["url"]}。' for path,value in sorted(entries.items()))
+            if not entries: body += '当前尚未挂载资产。'
+            self.block(repo,'README.md','catalog',body)
+        elif kind == 'root-index':
+            entries = modules(repo)
+            domains = [(p,v) for p,v in sorted(entries.items()) if p.startswith('domains/')]
+            body = f'## 领域清单\n\n已登记领域数量：{len(domains)}。\n\n'+ '\n'.join(f'- [{p.split("/")[-1]}]({p}/)。' for p,_ in domains)
+            self.block(repo,'README.md','domains',body)
+            index = '# 领域目录\n\n## 目录结构\n\n'+ '\n'.join(f'- {p}。' for p,_ in domains)+'\n\n## 领域清单\n\n'+'\n'.join(f'- [{p.split("/")[-1]}]({p.split("/")[-1]}/)。' for p,_ in domains)+'\n\n## 领域项目\n\n'+'\n\n'.join(f'### {p.split("/")[-1]}\n\n仓库：{v["url"]}' for p,v in domains)
+            original = text_at(repo,'domains/README.md')
+            index = content_block(original or '# 领域目录\n', 'domains-index', index.replace('# 领域目录\n\n','',1))
+            self.write(repo,'domains/README.md',index)
+        elif kind == 'finish':
+            # Restrict staging to files this workflow changed; recover touched paths from porcelain after resume.
+            status = git(repo,'status','--porcelain=v1','--untracked-files=all').stdout
+            if status:
+                paths = set(self.changed.get(repo.name,set()))
+                if not paths:
+                    raw = git(repo,'ls-files','--modified','--others','--exclude-standard','-z').stdout
+                    paths = set(filter(None,raw.split('\0')))
+                require(bool(paths), '发现未归属到工作流的变更，请人工检查。')
+                changelog = text_at(repo,'CHANGELOG.md') or '# 变更记录\n\n## [Unreleased]\n'
+                entry = '- second-brain-init '+self.plan['id'][:12]+'：'+self.plan['scenario']+'。'
+                if entry not in changelog:
+                    if '## [Unreleased]' not in changelog:
+                        changelog += '\n## [Unreleased]\n'
+                    changelog = changelog.replace('## [Unreleased]','## [Unreleased]\n\n'+entry,1)
+                    self.write(repo,'CHANGELOG.md',changelog)
+                paths.add('CHANGELOG.md')
+                for path in sorted(paths): safe_path(repo,path)
+                git(repo,'add','--',*sorted(paths))
+                if git(repo,'diff','--cached','--quiet',check=False).returncode:
+                    git(repo,'commit','-m','feat(asset): '+self.plan['scenario'])
+            branch = git(repo,'symbolic-ref','--short','HEAD').stdout.strip()
+            git(repo,'push','origin','HEAD:refs/heads/'+branch)
+        elif kind == 'rename-repo':
+            provider.rename(op['repo'],op['new_name'])
+        elif kind == 'replace-references':
+            files = git(repo,'ls-files','-z').stdout.split('\0')
+            for name in filter(None,files):
+                path = safe_path(repo,name)
+                if not path.is_file() or path.stat().st_size > 2_000_000:
+                    continue
+                try: content = path.read_text(encoding='utf-8')
+                except UnicodeError: continue
+                if '\x00' in content: continue
+                new = content
+                for old, fresh in op['renames'].items():
+                    new = re.sub(re.escape(old)+r'(?![a-z0-9-])',lambda _:fresh,new)
+                if new != content: self.write(repo,name,new)
+            git(repo,'submodule','sync','--recursive')
+        elif kind == 'refresh-mounts':
+            for path, value in modules(repo).items(): self.refresh(repo,path,value['url'])
+        elif kind == 'release-notes':
+            text = text_at(repo,'CHANGELOG.md')
+            require('## [Unreleased]' in text, '发布要求存在 Unreleased 章节。')
+            require('## ['+op['version']+']' not in text, '该版本已经存在。')
+            heading = '## [Unreleased]\n\n## ['+op['version']+'] - '+self.plan['created_at'][:10]+'\n\n'+op['notes']
+            self.write(repo,'CHANGELOG.md',text.replace('## [Unreleased]',heading,1))
+        elif kind == 'release':
+            tag = 'v'+op['version']
+            git(repo,'tag','-a',tag,'-m',op['notes'])
+            git(repo,'push','origin','refs/tags/'+tag)
+            if provider.kind == 'github':
+                command(['gh','release','create',tag,'--repo',provider.organization+'/'+op['repo'],'--verify-tag','--notes',op['notes']])
+        else:
+            raise WorkflowError('未知操作类型：'+kind)
+
+
+def markdown_errors(text):
+    errors, h1, fence = [], 0, False
+    for line in text.splitlines():
+        if line.startswith('```'):
+            if not fence and line == '```': errors.append('代码块未标注语言')
+            fence = not fence
+        elif not fence:
+            if line.startswith('# '): h1 += 1
+            if re.match(r'^#{4,}\s',line): errors.append('标题超过三级')
+    if h1 != 1: errors.append('需要且仅允许一个一级标题')
+    if fence: errors.append('代码块未闭合')
+    return errors
+
+
+def verify(plan, approval=None):
+    provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
+    details = []
+    final_names = set(plan['names']) - set(plan['config'].get('renames',{}))
+    for name in sorted(final_names):
+        path = provider.repo(name)
+        try:
+            require(path.exists(), '本地仓库不存在')
+            require(not git(path,'status','--porcelain').stdout, '工作区不干净')
+            require(git(path,'rev-parse','HEAD').stdout.strip()==provider.head(name), 'HEAD 与远端不一致')
+            for filename in ['README.md','CHANGELOG.md']:
+                content = text_at(path,filename)
+                if content: require(not markdown_errors(content), filename+'：'+'；'.join(markdown_errors(content)))
+            details.append({'check':'repository','repo':name,'passed':True})
+        except WorkflowError as exc:
+            details.append({'check':'repository','repo':name,'passed':False,'reason':str(exc)})
+    for check in plan['checks']:
+        try:
+            if check['kind']=='mount':
+                parent = provider.repo(check['repo'])
+                record = modules(parent).get(check['path'])
+                require(record and record['url']==provider.remote(check['child']), '子模块 URL 不一致')
+                raw = git(parent,'ls-tree','HEAD','--',check['path']).stdout.split()
+                require(raw and raw[0]=='160000' and raw[2]==provider.head(check['child']), '子模块指针与远端 HEAD 不一致')
+            elif check['kind']=='domain':
+                repo = provider.repo(check['repo'])
+                require(all(safe_path(repo,p).is_dir() for p in check['directories']), '领域目录缺失')
+                require(bool(text_at(repo,'LICENSE')), 'LICENSE 缺失')
+                require(all('## '+name in text_at(repo,'README.md') for name in ['概述','领域边界','相邻领域分工']), '领域 README 缺少必要章节')
+            elif check['kind']=='no-old-references':
+                for name in check['repos']:
+                    repo = provider.repo(name)
+                    for old in check['old_names']:
+                        require(git(repo,'grep','-l','-F','--',old,check=False).returncode==1, '仍存在旧仓库名称引用')
+            elif check['kind']=='tag':
+                require(bool(command(['git','ls-remote',provider.remote(check['repo']),'refs/tags/v'+check['version']]).stdout), '远端版本标签不存在')
+            details.append({'check':check,'passed':True})
+        except WorkflowError as exc:
+            details.append({'check':check,'passed':False,'reason':str(exc)})
+    return {'status':'passed' if all(d['passed'] for d in details) and details else 'failed','at':now(),
+            'plan_id':plan['id'], 'provider':plan['provider'],
+            'approval_kind':('simulated' if approval.get('simulated') else 'human-recorded') if approval else 'not-supplied',
+            'human_acceptance':'not-assessed', 'real_github_execution':plan['provider']=='github', 'details':details}
+
+
+@contextmanager
+def execution_locks(run, workspace):
+    work = Path(workspace)
+    paths = [work.parent / ('.'+work.name+'.second-brain-init.lock'), run/'execution.lock']
+    acquired = []
+    try:
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try: handle = path.open('x')
+            except FileExistsError:
+                raise WorkflowError('目标工作区或运行记录已有执行锁；确认没有进程运行后再处理。') from None
+            acquired.append((path,handle))
+            handle.write(str(os.getpid())+'\n'); handle.flush()
+        yield
+    finally:
+        for path, handle in reversed(acquired):
+            handle.close()
+            path.unlink()
+
+
+def apply(run):
+    run = Path(run)
+    plan = load_plan(run)
+    require((run/'approval-record.json').is_file(), '尚未确认，未执行任何操作。请先审阅并运行 approve。')
+    approval = read_json(run/'approval-record.json')
+    require(approval.get('accepted') is True and approval.get('plan_id')==plan['id'], '确认记录不对应此计划。')
+    require(not approval.get('simulated') or plan['provider']=='local', 'GitHub 模式不能使用模拟反馈。')
+    with execution_locks(run,plan['workspace']):
+        state_file = run/'execution-log.json'
+        provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
+        state = read_json(state_file) if state_file.exists() else {'plan_id':plan['id'],'completed':[], 'checkpoint':plan['before'],'events':[]}
+        require(state['plan_id']==plan['id'], '执行日志不对应此计划。')
+        state['approval_kind']='simulated' if approval.get('simulated') else 'human-recorded'
+        state['provider']=plan['provider']
+        if state.get('status') == 'completed':
+            report = verify(plan,approval)
+            save(run/'verification-report.json',report)
+            require(report['status']=='passed','既有结果已发生漂移，请检查报告。')
+            return report
+        require(snapshot(provider,plan['names']) == state['checkpoint'], '计划或上次检查点之后仓库已变化，请先人工检查并重新规划。')
+        executor, started = Executor(plan), time.monotonic()
+        state['status']='running'
+        state.pop('error',None)
+        save(state_file,state)
+        try:
+            for op in plan['operations']:
+                if op['id'] in state['completed']: continue
+                executor.execute(op)
+                state['completed'].append(op['id'])
+                state['events'].append({'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed'})
+                state['checkpoint']=snapshot(provider,plan['names'])
+                save(state_file,state)
+            report=verify(plan,approval)
+            save(run/'verification-report.json',report)
+            require(report['status']=='passed','结果校验未通过，请查看 verification-report.json。')
+            state['status']='completed'
+        except (WorkflowError, OSError, KeyboardInterrupt) as exc:
+            state['status']='paused'
+            state['error']=str(exc) or '用户中断'
+            # Keep the last successful checkpoint; do not bless partial mutations as known-safe.
+            raise WorkflowError(state['error']) from None
+        finally:
+            state['elapsed_seconds']=round(time.monotonic()-started,3)
+            save(state_file,state)
+            confirmation='模拟确认（自动化测试）' if approval.get('simulated') else '已记录审阅者确认'
+            result=['# 执行结果','', '状态：'+state['status'],'',
+                    '完成操作：'+str(len(state['completed']))+'/'+str(len(plan['operations'])),'',
+                    '环境：'+plan['provider'],'','确认类型：'+confirmation,'',
+                    '真实用户验收：未评估。','',
+                    '真实 GitHub 操作：'+('本次使用 GitHub provider，详情见执行日志。' if plan['provider']=='github' else '未执行；使用工作区内的本地 Git 远端。'),'',
+                    ('错误：'+state.get('error','') if state['status']!='completed' else '仓库、文档、子模块与远端一致性检查通过。'),'']
+            (run/'result.md').write_text('\n'.join(result),encoding='utf-8')
+        return report
+
+
+def cli(argv=None):
+    parser = argparse.ArgumentParser(description='第二大脑创建配置执行器；默认仅显示帮助。')
+    sub = parser.add_subparsers(dest='action')
+    p=sub.add_parser('plan',help='读取配置、调查现状并生成待确认计划')
+    p.add_argument('--config',type=Path,required=True); p.add_argument('--workspace',type=Path,required=True)
+    p.add_argument('--run-dir',type=Path,required=True); p.add_argument('--provider',choices=['local','github'],default='local')
+    p.add_argument('--organization',default='quanttide')
+    p=sub.add_parser('approve',help='人工审阅后确认具体计划')
+    p.add_argument('--run-dir',type=Path,required=True); p.add_argument('--reviewer',required=True)
+    p.add_argument('--accept',help='已在外部审阅的完整计划编号；缺省时交互确认')
+    p.add_argument('--simulated',action='store_true',help='仅供自动化本地测试，记录为模拟反馈')
+    for action in ['apply','verify']:
+        p=sub.add_parser(action); p.add_argument('--run-dir',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        if args.action=='plan':
+            plan=make_plan(args.config,args.workspace,args.run_dir,args.provider,args.organization)
+            print('计划已生成，等待审阅：'+str(args.run_dir/'execution-plan.md'))
+            print('计划编号：'+plan['id'])
+        elif args.action=='approve':
+            approve(args.run_dir,args.reviewer,args.accept,args.simulated); print('确认已记录。')
+        elif args.action=='apply':
+            report=apply(args.run_dir); print('执行与验证：'+report['status'])
+        elif args.action=='verify':
+            record=args.run_dir/'approval-record.json'
+            report=verify(load_plan(args.run_dir),read_json(record) if record.is_file() else None); save(args.run_dir/'verification-report.json',report)
+            print('验证：'+report['status']); return 0 if report['status']=='passed' else 1
+        else: parser.print_help()
+        return 0
+    except (WorkflowError, ValueError, OSError, yaml.YAMLError) as exc:
+        print('已暂停：'+str(exc),file=sys.stderr); return 1
+
+if __name__=='__main__':
+    raise SystemExit(cli())

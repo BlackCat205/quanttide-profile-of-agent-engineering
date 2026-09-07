@@ -1,0 +1,13 @@
+{
+  "reviewer": "浏览器自动化测试",
+  "at": "2026-09-07T09:15:04.084156+00:00",
+  "signature": "07e2e449ef96bf3cfc0076daddfffccc9f1f1a221d0c0c295d2165725699fbbc",
+  "simulated": true,
+  "choices": {
+    "meaning": "passed",
+    "navigation": "passed",
+    "usability": "improve"
+  },
+  "notes": "模拟试用意见：希望提供更多日志填写示例。",
+  "overall": "needs-improvement"
+}

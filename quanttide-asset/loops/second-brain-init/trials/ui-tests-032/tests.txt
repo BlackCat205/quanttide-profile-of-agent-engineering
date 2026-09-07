@@ -1,0 +1,13 @@
+test_changed_files_invalidate_acceptance (test_ui.UITests.test_changed_files_invalidate_acceptance) ... ok
+test_confirm_real_execution_report_and_feedback (test_ui.UITests.test_confirm_real_execution_report_and_feedback) ... ok
+test_cross_origin_missing_token_and_foreign_host_blocked (test_ui.UITests.test_cross_origin_missing_token_and_foreign_host_blocked) ... ok
+test_document_allowlist_and_export_escape (test_ui.UITests.test_document_allowlist_and_export_escape) ... ok
+test_failed_final_verification_still_exposes_readable_report (test_ui.UITests.test_failed_final_verification_still_exposes_readable_report) ... ok
+test_invalid_input_and_github_disabled_before_plan (test_ui.UITests.test_invalid_input_and_github_disabled_before_plan) ... ok
+test_naming_rules_and_direct_request_rejection (test_ui.UITests.test_naming_rules_and_direct_request_rejection) ... ok
+test_restart_marks_inflight_run_paused (test_ui.UITests.test_restart_marks_inflight_run_paused) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 46.477s
+
+OK

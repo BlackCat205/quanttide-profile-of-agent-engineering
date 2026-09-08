@@ -30,6 +30,10 @@ function check(condition,message){if(!condition)throw Error(message);checks.push
  check((await page.locator('#provider').inputValue())==='github','Next creation keeps GitHub mode');
  check((await page.locator('input[name=root_repo]').inputValue())==='second-brain-test','Next creation keeps selected root');
  check((await page.locator('select[name=root_mode]').inputValue())==='existing','After completion next creation uses existing root');
+ check(await page.locator('input[name=test_organization]').isVisible(),'Owned test organization field is available');
+ await page.evaluate(()=>{view={status:'completed',organization:'TestOrg',plan:{provider:'github',owner_type:'Organization',account_login:'BlackCat205',root_repo:'second-brain-test',root_mode:'new'}};reset()});
+ check((await page.locator('input[name=test_organization]').inputValue())==='TestOrg','Next creation preserves the selected organization');
+ check((await page.locator('input[name=organization]').inputValue())==='BlackCat205','Organization selection does not replace logged-in account identity');
  await page.setViewportSize({width:390,height:844});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Account form fits mobile viewport');
  await page.setViewportSize({width:1280,height:900});await page.screenshot({path:path.join(out,'account-form.png'),fullPage:true});
  check(!fs.existsSync(path.join(store,'runs')),'Account UI test makes no creation plans or repositories');

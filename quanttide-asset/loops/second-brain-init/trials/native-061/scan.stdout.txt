@@ -1,0 +1,54 @@
+{
+  "root_path": ".",
+  "total_dirs": 5,
+  "total_files": 204,
+  "assets": [
+    {
+      "name": "loops",
+      "path": "./loops",
+      "type": "通用",
+      "size": 7949592,
+      "files_count": 193,
+      "categories": [
+        "second-brain-init"
+      ]
+    },
+    {
+      "name": "contexts",
+      "path": "./contexts",
+      "type": "通用",
+      "size": 15877,
+      "files_count": 2,
+      "categories": []
+    },
+    {
+      "name": ".quanttide",
+      "path": "./.quanttide",
+      "type": "通用",
+      "size": 2060,
+      "files_count": 1,
+      "categories": [
+        "asset"
+      ]
+    },
+    {
+      "name": "sessions",
+      "path": "./sessions",
+      "type": "通用",
+      "size": 138075,
+      "files_count": 1,
+      "categories": []
+    },
+    {
+      "name": "skills",
+      "path": "./skills",
+      "type": "通用",
+      "size": 72932,
+      "files_count": 7,
+      "categories": [
+        "second-brain-init"
+      ]
+    }
+  ],
+  "synced_at": ""
+}

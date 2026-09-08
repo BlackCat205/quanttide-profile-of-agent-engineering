@@ -1,0 +1,16 @@
+
+=== 契约配置 ===
+ℹ️  契约位置: /tmp/asset-native-registration-urhi67zh/plugin
+ℹ️  资产数: 6
+ℹ️  技能数: 1
+
+资产列表:
+  - sessions: data
+  - trials: data
+  - skills: config
+  - contexts: data
+  - loops: config
+  - user_docs: docs
+
+技能列表:
+  - second-brain-init: v0.3.1

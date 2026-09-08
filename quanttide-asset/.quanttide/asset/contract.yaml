@@ -68,7 +68,7 @@ skills:
       specification: skills/second-brain-init/assets/specification.yaml
       bridge: asset-entry.py
       ui_entrypoint: loops/second-brain-init/ui/app.py
-      ui_version: 0.6.0
+      ui_version: 0.6.1
 validation:
   policies:
   - selector: skills

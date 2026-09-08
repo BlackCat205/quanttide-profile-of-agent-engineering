@@ -1,0 +1,219 @@
+{
+  "status": "passed",
+  "source_commit": "519b4e01c5f7c35f83c2311d093ac4d19ae6f338",
+  "binary_sha256": "754cb8d2ea658234d124d4998bd734ad8a9c41fdaa09a6ff2ae0120d76076e07",
+  "contract_sha256": "1059e24867da29b5c298c8f2d53ff56f01c6e3298d11b90b39ccb5c1c23d3f92",
+  "platform": "Linux",
+  "registered_assets": 6,
+  "registered_skills": 1,
+  "scanned_directories": 5,
+  "positive_validation": {
+    "total_assets": 5,
+    "passed_assets": 5,
+    "failed_assets": 0,
+    "results": [
+      {
+        "name": "loops",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "必须包含分类 'second-brain-init'",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "contexts",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": ".quanttide",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "sessions",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "skills",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "必须包含分类 'second-brain-init'",
+            "status": "pass"
+          }
+        ]
+      }
+    ]
+  },
+  "negative_validation": {
+    "total_assets": 5,
+    "passed_assets": 4,
+    "failed_assets": 1,
+    "results": [
+      {
+        "name": "loops",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "必须包含分类 'second-brain-init'",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "contexts",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": ".quanttide",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "sessions",
+        "passed": true,
+        "rules_passed": 1,
+        "rules_failed": 0,
+        "details": [
+          {
+            "rule": "资产存在",
+            "status": "pass"
+          }
+        ]
+      },
+      {
+        "name": "skills",
+        "passed": false,
+        "rules_passed": 0,
+        "rules_failed": 1,
+        "details": [
+          {
+            "rule": "必须包含分类 'second-brain-init'",
+            "status": "fail"
+          }
+        ]
+      }
+    ]
+  },
+  "negative_json_exit_code": 0,
+  "records": [
+    {
+      "name": "version",
+      "arguments": [
+        "version"
+      ],
+      "cwd_role": "plugin",
+      "returncode": 0,
+      "at": "2026-09-08T14:08:45.876579+00:00"
+    },
+    {
+      "name": "config",
+      "arguments": [
+        "config"
+      ],
+      "cwd_role": "plugin",
+      "returncode": 0,
+      "at": "2026-09-08T14:08:45.883303+00:00"
+    },
+    {
+      "name": "scan",
+      "arguments": [
+        "scan",
+        "--json"
+      ],
+      "cwd_role": "plugin",
+      "returncode": 0,
+      "at": "2026-09-08T14:08:45.889023+00:00"
+    },
+    {
+      "name": "validate",
+      "arguments": [
+        "validate",
+        "--json"
+      ],
+      "cwd_role": "plugin",
+      "returncode": 0,
+      "at": "2026-09-08T14:08:45.893160+00:00"
+    },
+    {
+      "name": "negative-missing-category",
+      "arguments": [
+        "validate",
+        "--json"
+      ],
+      "cwd_role": "negative-fixture",
+      "returncode": 0,
+      "at": "2026-09-08T14:08:45.917785+00:00"
+    },
+    {
+      "name": "negative-plain-exit",
+      "arguments": [
+        "validate"
+      ],
+      "cwd_role": "negative-fixture",
+      "returncode": 1,
+      "at": "2026-09-08T14:08:45.920624+00:00"
+    },
+    {
+      "name": "negative-malformed",
+      "arguments": [
+        "config"
+      ],
+      "cwd_role": "negative-fixture",
+      "returncode": 1,
+      "at": "2026-09-08T14:08:45.922928+00:00"
+    }
+  ],
+  "limits": [
+    "config proves deserialization and listing, not skill execution",
+    "validate checks configured directory policies, not complete business conformity",
+    "negative JSON report can return zero; failure count is checked explicitly",
+    "no Windows execution or real GitHub creation in this test"
+  ]
+}

@@ -2,6 +2,7 @@
 """Loopback-only UI for the registered Asset Cloud executor. No extra web framework."""
 from __future__ import annotations
 import argparse
+import copy
 import hashlib
 import html
 import io
@@ -33,7 +34,7 @@ sys.path.insert(0,str(HERE))
 import survey
 from github_login import Login
 import repair
-VERSION='0.6.0'
+VERSION='0.6.1'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -43,6 +44,24 @@ def read(path, default=None):
 
 def cleaned_error(exc):
     return str(exc)[:1500] or '操作中断，请保留记录后检查。'
+
+def readable_report(report):
+    if not report:return report
+    result=copy.deepcopy(report);legacy=False
+    for row in result.get('failures',[]):
+        if 'status' not in row:
+            legacy=True
+            row['status']='unknown' if 'git ls-remote 失败' in row.get('reason','') else 'failed'
+    for row in result.get('repositories',[]):
+        if 'status' not in row:
+            failed=next((x for x in result.get('failures',[]) if x.get('check')=='repository' and x.get('repo')==row['name']),{})
+            row['status']='passed' if row.get('passed') else failed.get('status','failed')
+    if legacy:
+        result['historical']=True
+        mounts=[x for x in result.get('failures',[]) if isinstance(x.get('check'),dict) and x['check'].get('kind')=='mount']
+        for row in result.get('rows',[]):
+            if row['key']=='mounts' and mounts and all(x['status']=='unknown' for x in mounts):row['status']='unknown'
+    return result
 
 def naming_rules():
     specification=e.read_yaml(e.SPEC)
@@ -139,11 +158,14 @@ class Studio:
         e.require(mode in ('new','existing'),'请选择新建或使用已有总入口。')
         cfg={'schema_version':1,'scenario':'new-domain','domain':domain,'register_root':True,'root_repo':root,'new_repositories_only':True,'new_root':mode=='new'}
         e.validate_config(cfg,e.read_yaml(e.SPEC))
-        org=e.github_owner(payload.get('organization','quanttide').strip() or 'quanttide')
+        org=e.github_owner((payload.get('test_organization','').strip() or payload.get('organization','quanttide').strip()) or 'quanttide')
         if provider=='github':
             e.require(self.login.status()['status']!='waiting','请先完成或取消正在进行的 GitHub 登录。')
             identity=e.github_identity(org)
-            e.require(identity['owner_type']=='User' and identity['owner_id']==identity['id'], '此网页版本只开放当前登录者的个人测试仓库；组织写入另行联调。')
+            if identity['owner_type']=='Organization':
+                membership=json.loads(e.command(['gh','api','user/memberships/orgs/'+identity['owner']]).stdout)
+                e.require(membership.get('state')=='active' and membership.get('role')=='admin','测试组织入口只支持当前账号担任所有者的组织；无法确认时停止，不创建仓库。')
+            else:e.require(identity['owner_id']==identity['id'],'只能使用本人账号或自己管理的测试组织。')
             org=identity['owner']
         key=secrets.token_hex(8);folder=self.storage/'runs'/key;folder.mkdir(parents=True)
         # Fresh checkout per run avoids stale local clones; GitHub runs reuse the selected remote root.
@@ -283,7 +305,13 @@ class Studio:
                     e.save(folder/'verification-report.json',report);self.build_report(folder)
                     self.set_meta(folder,status='completed' if report['status']=='passed' else 'paused',error=None if report['status']=='passed' else '补交完成；仍有项目未通过或无法核验，请查看报告。')
                 else:
-                    repair.preview(folder)
+                    check={'started_at':e.now(),'action':'prepare-license-repair','status':'checking'}
+                    try:
+                        repair.preview(folder);check['status']='ready'
+                    except Exception as exc:
+                        check.update(status='blocked',reason=cleaned_error(exc));raise
+                    finally:
+                        check['finished_at']=e.now();e.save(folder/'repair-check.json',check)
                     self.set_meta(folder,status='paused',error='补交方案已准备好，请查看文件内容后确认。')
             self.spawn(folder,task)
         return {'id':key}
@@ -306,7 +334,7 @@ class Studio:
             return value
         report=read(folder/'verification-report.json',{})
         report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
-        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','owned_files')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json')}}
+        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','owned_files')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
             for name,data in records.items():archive.writestr(name,json.dumps(scrub(data),ensure_ascii=False,indent=2))
@@ -341,7 +369,7 @@ class Studio:
                 {'status':'passed' if expected==set(plan['names']) else 'failed','title':'仓库名称与创建范围','detail':'领域短名生成领域仓库；英文全名生成资料仓库后缀。依据：资产章程第五、六条及原始新建流程。'},
                 {'status':'manual','title':'用途、英文含义与领域边界','detail':'请阅读下方需求摘要，确认准确表达你的需求；程序不能替你判断。'},
                 {'status':'manual','title':'本次操作位置','detail':'本机独立测试空间，不写入 GitHub。' if plan['provider']=='local' else '将写入 '+plan['organization']+' 的公开 GitHub 仓库；请核对账号、公开属性与已有规则。'}]
-            result['plan']={'id':plan['id'],'domain':d,'root_repo':root_name,'root_mode':'new' if plan['config'].get('new_root') else 'existing','provider':plan['provider'],'workspace':plan['workspace'],'repositories':[dict(name='quanttide-'+d['short_name'],role='领域首页',purpose='本领域的介绍和资料导航。',path='domains/quanttide-'+d['short_name'])]+[dict(name=m[k]['repo'],role=ROLES[k][0],purpose=ROLES[k][1],path=m[k]['path']) for k in ROLES]+[dict(name=root_name,role='总入口',purpose='从这里查找各领域。',path='总入口')],'inspection':plan['inspection']}
+            result['plan']={'id':plan['id'],'domain':d,'root_repo':root_name,'root_mode':'new' if plan['config'].get('new_root') else 'existing','provider':plan['provider'],'workspace':plan['workspace'],'owner_type':(plan.get('github_identity') or {}).get('owner_type'),'account_login':(plan.get('github_identity') or {}).get('login'),'repositories':[dict(name='quanttide-'+d['short_name'],role='领域首页',purpose='本领域的介绍和资料导航。',path='domains/quanttide-'+d['short_name'])]+[dict(name=m[k]['repo'],role=ROLES[k][0],purpose=ROLES[k][1],path=m[k]['path']) for k in ROLES]+[dict(name=root_name,role='总入口',purpose='从这里查找各领域。',path='总入口')],'inspection':plan['inspection']}
         if log.get('events'):result['last_operation']=log['events'][-1].get('kind')
         if plan:
             result['observation']={'at':plan['created_at'],'provider':plan['provider'],'organization':plan['organization'],'scope':'仅本次计划涉及的仓库，非持续监控。','rules':plan['sources']['bylaw'],'spec_sha256':plan['spec_sha256']}
@@ -355,7 +383,7 @@ class Studio:
         result['repair_record']=read(folder/'repair-record.json')
         if result['repair_record']:
             result['events']=list(result['events'])+[dict(event,kind='repair-license',repo=(result['repair'] or {}).get('root','总入口'),status='passed' if event['status']=='pushed' else 'failed') for event in result['repair_record'].get('events',[])]
-        result['report']=read(folder/'ui-report.json')
+        result['report']=readable_report(read(folder/'ui-report.json'))
         acceptance=read(folder/'human-acceptance.json')
         if acceptance and result['report']:acceptance['stale']=acceptance['signature']!=result['report']['signature']
         result['acceptance']=acceptance

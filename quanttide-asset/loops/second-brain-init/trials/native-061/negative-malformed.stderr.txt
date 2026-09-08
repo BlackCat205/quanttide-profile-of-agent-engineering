@@ -1,0 +1,4 @@
+Error: 契约格式错误: /tmp/asset-native-registration-urhi67zh/malformed/.quanttide/asset/contract.yaml
+
+Caused by:
+    assets: invalid type: sequence, expected a map at line 1 column 9

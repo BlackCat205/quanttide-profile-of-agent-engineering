@@ -1,0 +1,9 @@
+{
+  "source_repository": "quanttide/qtcloud-asset",
+  "source_commit": "519b4e01c5f7c35f83c2311d093ac4d19ae6f338",
+  "command": "cargo build --locked --manifest-path src/cli/Cargo.toml --target-dir <temporary-build-directory>",
+  "returncode": 0,
+  "ui_version": "0.6.1",
+  "engine_version": "0.3.1",
+  "contract_sha256": "1059e24867da29b5c298c8f2d53ff56f01c6e3298d11b90b39ccb5c1c23d3f92"
+}

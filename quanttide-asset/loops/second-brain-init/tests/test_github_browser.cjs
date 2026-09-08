@@ -12,11 +12,15 @@ function check(condition,message){if(!condition)throw Error(message);checks.push
  browser=await pw.chromium.launch({headless:true,executablePath:process.env.SECOND_BRAIN_BROWSER,args:['--no-sandbox']});
  const page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/github/check',route=>route.fulfill({json:{status:'connected',login:'BlackCat205',id:205,message:'模拟授权状态，仅验证页面。',checked_at:new Date().toISOString()}}));
- await page.route('**/api/github/login',route=>route.fulfill({json:{status:'waiting',device_code:'TEST-0000',message:'模拟验证码，不可用于实际登录。'}}));
+ let missing=true;
+ await page.route('**/api/github/login',route=>route.fulfill({json:missing?{status:'missing',message:'模拟未安装 CLI'}:{status:'waiting',device_code:'TEST-0000',message:'模拟验证码，不可用于实际登录。'}}));
  await page.route('**/api/github/cancel',route=>route.fulfill({json:{status:'cancelled',message:'已取消本次登录。'}}));
  await page.goto(url);await page.waitForFunction(()=>rules!==null);
  check(!(await page.locator('#github-option').isDisabled()),'Personal GitHub option is enabled in standard launcher');
- await page.locator('#provider').selectOption('github');await page.locator('#github-login').click();await page.waitForFunction(()=>document.querySelector('#github-code').textContent.includes('TEST-0000'));
+ await page.locator('#provider').selectOption('github');await page.locator('#github-login').click();await page.locator('#github-install').waitFor({state:'visible'});
+ check((await page.locator('#github-install').textContent()).includes('Download MSI'),'Missing CLI shows Windows installer instructions');
+ await page.waitForTimeout(1200);check(await page.locator('#github-install').isVisible(),'Installation guidance survives instead of being overwritten by login polling');
+ missing=false;await page.waitForFunction(()=>!busy);await page.locator('#github-login').click();await page.waitForFunction(()=>document.querySelector('#github-code').textContent.includes('TEST-0000'));
  check((await page.locator('#github-authorize').getAttribute('href'))==='https://github.com/login/device','Device code points to official GitHub authorization page');
  check(await page.locator('#github-cancel').isVisible(),'Waiting authorization can be cancelled');
  await page.waitForFunction(()=>!busy);await page.locator('#github-cancel').click();await page.locator('#github-code').waitFor({state:'hidden'});check(!(await page.locator('#github-code').isVisible()),'Cancellation removes one-time code');

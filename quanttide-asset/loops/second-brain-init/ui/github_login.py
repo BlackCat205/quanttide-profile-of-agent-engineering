@@ -30,7 +30,9 @@ class Login:
     def start(self):
         with self.lock:
             e.require(self.state['status']!='waiting','登录正在进行，请完成授权或取消。')
-            e.require(shutil.which('gh'),'请先安装 GitHub CLI，安装后重新打开启动向导。')
+            if not shutil.which('gh'):
+                self.state=self.inspect()
+                return dict(self.state)
             env=dict(os.environ,GH_HOST='github.com',GH_PROMPT_DISABLED='1',GH_BROWSER='')
             # An environment token overrides stored interactive credentials. Do not silently use another identity.
             e.require(not any(env.get(k) for k in ('GH_TOKEN','GITHUB_TOKEN')),'检测到环境变量授权；请使用“检查登录状态”确认账号，或在不设置令牌的终端启动本工具。')

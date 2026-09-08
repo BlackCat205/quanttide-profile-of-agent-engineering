@@ -7,3 +7,5 @@
 #survey-result{overflow-wrap:anywhere}#survey-result pre{white-space:pre-wrap;max-height:320px;overflow:auto}#observation-info{overflow-wrap:anywhere}
 
 #operation-events{max-height:240px;overflow:auto;padding-left:24px;overflow-wrap:anywhere}#operation-events li{padding:5px 0}#github-code{font-size:22px;font-weight:700}#github-results p{overflow-wrap:anywhere}#github-results small{display:block}
+
+.unknown{color:#805b12;background:#fff4d7}.aside-card button{margin:6px 0;max-width:100%}#repair-content{white-space:pre-wrap;overflow-wrap:anywhere}#failure-reasons p{margin:10px 0}#document-content pre{white-space:pre-wrap;overflow-wrap:anywhere}

@@ -13,11 +13,13 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
 from datetime import datetime, timezone
 
 import yaml
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
+verification_observer = threading.local()
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
@@ -25,6 +27,10 @@ CC = 'Creative Commons Attribution 4.0 International (CC BY 4.0)\n\nThis work is
 APACHE = 'Apache License, Version 2.0\n\nLicensed under the Apache License, Version 2.0 (the "License");\nyou may not use this work except in compliance with the License.\nYou may obtain a copy of the License at\n\n    https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an "AS IS" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n'
 
 class WorkflowError(Exception):
+    pass
+
+class RemoteReadError(WorkflowError):
+    """Remote state was not observed; this is not evidence of invalid assets."""
     pass
 
 def require(condition, message):
@@ -92,15 +98,25 @@ def command(argv, cwd=None, check=True):
         for key,value in [('credential.https://github.com.helper',''),('credential.https://github.com.helper','!gh auth git-credential')]:
             env['GIT_CONFIG_KEY_'+str(count)]=key;env['GIT_CONFIG_VALUE_'+str(count)]=value;count+=1
         env['GIT_CONFIG_COUNT']=str(count)
-    try:
-        result = subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
-    except FileNotFoundError:
-        raise WorkflowError(f'找不到 {argv[0]}，请按使用说明安装。') from None
-    except subprocess.TimeoutExpired:
-        raise WorkflowError(f'{argv[0]} 超时；已暂停，请检查连接后恢复。') from None
+    readonly = list(map(str,argv[:2])) == ['git','ls-remote']
+    attempts = 3 if readonly else 1
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=25 if readonly else 120)
+        except FileNotFoundError:
+            raise WorkflowError(f'找不到 {argv[0]}，请按使用说明安装。') from None
+        except subprocess.TimeoutExpired:
+            if readonly and attempt+1 < attempts: continue
+            raise (RemoteReadError if readonly else WorkflowError)(f'{argv[0]} 超时；读取未完成，请检查连接。' if readonly else f'{argv[0]} 超时；写入结果待核对，不会自动重试。') from None
+        if not result.returncode: break
+        transient = any(x in result.stderr.lower() for x in ('could not resolve','failed to connect','connection was reset','connection reset','timed out','recv failure','http/2','remote end hung up','502','503','504'))
+        if not (readonly and transient and attempt+1 < attempts): break
+        time.sleep(.3*(attempt+1))
     if check and result.returncode:
-        # Do not put provider output / authentication details in persisted logs.
-        raise WorkflowError(f'{argv[0]} {argv[1] if len(argv)>1 else ""} 失败（退出码 {result.returncode}）。请在目标仓库人工检查权限或 Git 状态。')
+        # Classify without persisting raw stderr, which may contain credentials.
+        reason = '连接中断或超时' if transient else '认证或权限受限' if any(x in result.stderr.lower() for x in ('authentication','permission denied','403','401')) else '读取或 Git 状态异常'
+        raise (RemoteReadError if readonly else WorkflowError)(f'{argv[0]} {argv[1] if len(argv)>1 else ""} 失败（退出码 {result.returncode}）：{reason}。'+(f'本次最多尝试 {attempts} 次；暂时无法核验远端。' if readonly else '请先核对实际结果，不会自动重复写入。'))
+
     return result
 
 def git(path, *args, check=True):
@@ -142,7 +158,7 @@ class Provider:
             return {'exists': remote.is_dir(), 'branch': 'main', 'visibility': 'local'}
         result = command(['gh', 'api', f'repos/{self.organization}/{slug(name)}'], check=False)
         if result.returncode:
-            require('(HTTP 404)' in result.stderr, f'无法读取 {name}；网络、登录或权限错误，不能当作仓库不存在。')
+            if '(HTTP 404)' not in result.stderr: raise RemoteReadError(f'无法读取 {name}；网络、登录或权限错误，不能当作仓库不存在。')
             return {'exists': False, 'branch': 'main', 'visibility': 'public'}
         data = json.loads(result.stdout)
         require(data.get('visibility') == 'public', '本插件仅处理公开第二大脑；检测到非公开仓库。')
@@ -406,12 +422,12 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
     return plan
 
 
-def load_plan(run):
+def load_plan(run, readonly=False):
     plan = read_json(Path(run)/'execution-plan.json')
     expected = plan.pop('id')
     require(digest(plan) == expected, '计划内容已变化，请重新生成并确认。')
     plan['id'] = expected
-    require(plan['engine_sha256'] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), '执行器版本已变化，请重新生成计划。')
+    require(readonly or plan['engine_sha256'] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), '执行器版本已变化；旧任务请使用检查或专用修复入口，未开始任务需重新生成计划。')
     require(plan['spec_sha256'] == hashlib.sha256(SPEC.read_bytes()).hexdigest(), '配置规格已变化，请重新生成计划。')
     return plan
 
@@ -428,10 +444,19 @@ def approve(run, reviewer, accepted_id=None, simulated=False):
     return record
 
 class Executor:
-    def __init__(self, plan):
+    def __init__(self, plan, changed=None):
         self.plan = plan
         self.provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
-        self.changed = {}
+        self.changed = {name:set(paths) for name,paths in (changed or {}).items()}
+
+    def owned_content(self):
+        result={}
+        for name,paths in self.changed.items():
+            result[name]={}
+            for relative in sorted(paths):
+                path=safe_path(self.provider.repo(name),relative)
+                result[name][relative]=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        return result
 
     def write(self, repo, name, content, missing_only=False):
         path = safe_path(repo, name)
@@ -474,6 +499,7 @@ class Executor:
                 location = safe_path(repo,path)
                 if location.is_dir() and sorted(p.name for p in location.iterdir()) == ['.gitkeep']:
                     git(repo,'rm','--',path+'/.gitkeep')
+                    self.changed.setdefault(repo.name,set()).add(path+'/.gitkeep')
                     if location.exists(): location.rmdir()
                 require(not location.exists(), f'{path} 已存在，需人工处理。')
                 git(repo,'-c','protocol.file.allow=always' if provider.kind=='local' else 'protocol.file.allow=never','submodule','add',url,path)
@@ -518,10 +544,9 @@ class Executor:
             status = git(repo,'status','--porcelain=v1','--untracked-files=all').stdout
             if status:
                 paths = set(self.changed.get(repo.name,set()))
-                if not paths:
-                    raw = git(repo,'ls-files','--modified','--others','--exclude-standard','-z').stdout
-                    paths = set(filter(None,raw.split('\0')))
-                require(bool(paths), '发现未归属到工作流的变更，请人工检查。')
+                pending = set(filter(None,git(repo,'ls-files','--modified','--others','--exclude-standard','-z').stdout.split('\0')))
+                staged = set(filter(None,git(repo,'diff','--cached','--name-only','-z').stdout.split('\0')))
+                require(bool(paths) and (pending | staged) <= paths, '发现未归属到工作流的变更，请人工检查；不会提交额外文件。')
                 changelog = text_at(repo,'CHANGELOG.md') or '# 变更记录\n\n## [Unreleased]\n'
                 entry = '- second-brain-init '+self.plan['id'][:12]+'：'+self.plan['scenario']+'。'
                 if entry not in changelog:
@@ -531,10 +556,12 @@ class Executor:
                     self.write(repo,'CHANGELOG.md',changelog)
                 paths.add('CHANGELOG.md')
                 for path in sorted(paths): safe_path(repo,path)
-                git(repo,'add','--',*sorted(paths))
+                stage_paths=[p for p in sorted(paths) if not any(p.startswith(parent+'/') for parent in paths if parent!=p)]
+                git(repo,'add','--',*stage_paths)
                 if git(repo,'diff','--cached','--quiet',check=False).returncode:
                     git(repo,'commit','-m','feat(asset): '+self.plan['scenario'])
             branch = git(repo,'symbolic-ref','--short','HEAD').stdout.strip()
+            require(not git(repo,'status','--porcelain').stdout, '提交后仍有遗漏文件，请保留任务并检查。')
             git(repo,'push','origin','HEAD:refs/heads/'+branch)
         elif kind == 'rename-repo':
             provider.rename(op['repo'],op['new_name'])
@@ -588,11 +615,17 @@ def verify(plan, approval=None):
     provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
     details = []
     final_names = set(plan['names']) - set(plan['config'].get('renames',{}))
+    total=len(final_names)+len(plan['checks'])
+    def progress(repo,label):
+        callback=getattr(verification_observer,'callback',None)
+        if callback:callback({'repo':repo,'label':label,'completed':len(details),'total':total,'at':now()})
     for name in sorted(final_names):
+        progress(name,'检查文件与远端提交（远端读取最多尝试 3 次）')
         path = provider.repo(name)
         try:
             require(path.exists(), '本地仓库不存在')
-            require(not git(path,'status','--porcelain').stdout, '工作区不干净')
+            dirty=git(path,'status','--porcelain').stdout
+            require(not dirty, '存在未提交文件：'+dirty.strip())
             require(git(path,'rev-parse','HEAD').stdout.strip()==provider.head(name), 'HEAD 与远端不一致')
             for filename in ['README.md','CHANGELOG.md']:
                 content = text_at(path,filename)
@@ -601,8 +634,9 @@ def verify(plan, approval=None):
                 require(all(text_at(path,f) for f in ['README.md','LICENSE','CHANGELOG.md']), '新仓库缺少说明、许可或变更记录')
             details.append({'check':'repository','repo':name,'passed':True,'commit':git(path,'rev-parse','HEAD').stdout.strip(),'checked_at':now(), 'url':'https://github.com/'+plan['organization']+'/'+name if plan['provider']=='github' else None})
         except WorkflowError as exc:
-            details.append({'check':'repository','repo':name,'passed':False,'reason':str(exc)})
+            details.append({'check':'repository','repo':name,'passed':False,'status':'unknown' if isinstance(exc,RemoteReadError) else 'failed','reason':str(exc),'checked_at':now(),'url':'https://github.com/'+plan['organization']+'/'+name if plan['provider']=='github' else None})
     for check in plan['checks']:
+        progress(check.get('repo','本次范围'),{'mount':'检查仓库连接','domain':'检查目录结构','tag':'检查远端版本标签'}.get(check['kind'],'检查资料引用'))
         try:
             if check['kind']=='mount':
                 parent = provider.repo(check['repo'])
@@ -624,7 +658,11 @@ def verify(plan, approval=None):
                 require(bool(command(['git','ls-remote',provider.remote(check['repo']),'refs/tags/v'+check['version']]).stdout), '远端版本标签不存在')
             details.append({'check':check,'passed':True})
         except WorkflowError as exc:
-            details.append({'check':check,'passed':False,'reason':str(exc)})
+            details.append({'check':check,'repo':check.get('repo'),'passed':False,'status':'unknown' if isinstance(exc,RemoteReadError) else 'failed','reason':str(exc),'checked_at':now()})
+    progress('全部目标仓库','本轮核验结束')
+    for detail in details:
+        detail.setdefault('status','passed' if detail['passed'] else 'failed')
+        detail.setdefault('checked_at',now())
     return {'status':'passed' if all(d['passed'] for d in details) and details else 'failed','at':now(),
             'plan_id':plan['id'], 'provider':plan['provider'],
             'approval_kind':('simulated' if approval.get('simulated') else 'human-recorded') if approval else 'not-supplied',
@@ -672,7 +710,8 @@ def apply(run):
             require(report['status']=='passed','既有结果已发生漂移，请检查报告。')
             return report
         require(snapshot(provider,plan['names']) == state['checkpoint'], '计划或上次检查点之后仓库已变化，请先人工检查并重新规划。')
-        executor, started = Executor(plan), time.monotonic()
+        executor, started = Executor(plan,state.get("owned_files")), time.monotonic()
+        require(not state.get('owned_content') or executor.owned_content()==state['owned_content'], '工作流文件内容已变化，请人工检查，不能自动提交。')
         state['status']='running'
         state.pop('error',None)
         save(state_file,state)
@@ -683,9 +722,12 @@ def apply(run):
                 state['current']={'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'running'}
                 state['events'].append(dict(state['current']));save(state_file,state)
                 require(snapshot(provider,plan['names']) == state['checkpoint'], '执行过程中仓库已变化；停止并保留已完成记录，请重新调查。')
+                require(not state.get('owned_content') or executor.owned_content()==state['owned_content'], '工作流文件内容已变化，请人工检查，不能自动提交。')
                 executor.execute(op)
                 state['completed'].append(op['id'])
                 state['events'].append({'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed'})
+                state['owned_content']=executor.owned_content()
+                state['owned_files']={name:sorted(paths) for name,paths in executor.changed.items()}
                 state['checkpoint']=snapshot(provider,plan['names'])
                 state['current']['status']='passed'
                 save(state_file,state)

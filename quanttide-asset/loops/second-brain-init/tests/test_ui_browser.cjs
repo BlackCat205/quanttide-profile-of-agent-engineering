@@ -55,6 +55,13 @@ await capture(page,{path:path.join(out,'01-create.png'),fullPage:true});
  check((await page.locator('#execution-check').textContent()).includes('通过'),'Result exposes real pre-execution recheck record');
  check((await page.locator('#technical-status').textContent()).includes('技术检查通过'),'Real Git execution passes technical checks');
  check(await page.locator('.report-row').count()===7,'Seven plain-language checks show actual evidence');
+ check(await page.locator('#show-storage').isVisible(),'Record location remains accessible on result screen');
+ await page.locator('#show-storage').click();await page.locator('#document-dialog').waitFor({state:'visible'});
+ check((await page.locator('#document-content').textContent()).includes(storage),'Location dialog shows actual storage directory');await page.locator('#close-document').click();
+ const diagnosticDownload=page.waitForEvent('download');await page.locator('#export-diagnostics').click();const diagnostic=await diagnosticDownload;
+ check(diagnostic.suggestedFilename()==='second-brain-diagnostics.zip','One-click diagnostic ZIP downloads');await diagnostic.saveAs(path.join(out,'diagnostics.zip'));
+ check((await page.locator('#current-operation').textContent()).includes('验收：'),'Verification progress is distinct from creation progress');
+
  check((await page.locator('#acceptance-state').textContent()).includes('待本人验收'),'Technical pass does not auto-approve human acceptance');
  await page.locator('#open-home').click();await page.locator('#document-dialog').waitFor({state:'visible'});
  check((await page.locator('#document-content').textContent()).includes('相邻领域分工'),'Actual domain README opens in readable dialog');await capture(page,{path:path.join(out,'04-home.png'),fullPage:true});await page.locator('#close-document').click();

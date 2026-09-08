@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "at": "2026-09-08T07:16:53.196Z",
+  "checks": [
+    "Unavailable observations are separate from actual defects",
+    "Failure details identify repository",
+    "Requirement row preserves unknown state",
+    "Repair displays proposed license content",
+    "No repair request without explicit confirmation",
+    "Confirmed repair sends exactly one request",
+    "Paused repair screen fits mobile viewport",
+    "No JavaScript errors"
+  ],
+  "errors": [],
+  "platform": "linux",
+  "github": "simulated",
+  "real_windows": false
+}

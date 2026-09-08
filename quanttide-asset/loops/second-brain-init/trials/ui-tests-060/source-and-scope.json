@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-08T07:18:42.339546+00:00",
+  "ui_version": "0.6.0",
+  "engine_version": "0.3.1",
+  "platform": "linux",
+  "real_git": true,
+  "github_transport": "simulated",
+  "windows_execution": false,
+  "company_asset_cloud": false,
+  "sha256": {
+    "quanttide-asset/skills/second-brain-init/scripts/engine.py": "a3f8b7e435ffc531d7d974365ea0aa3722c210cd60a10d49ff16d13cd3342cb5",
+    "quanttide-asset/loops/second-brain-init/ui/app.py": "69814527350a640bac950dac90ba2fb2c0f968c77372116c9aff457b5b4302ce",
+    "quanttide-asset/loops/second-brain-init/ui/repair.py": "01be6cf88fdf7ab20b64d2d7f2d1758881323353b111761c17c16e568025179f",
+    "quanttide-asset/loops/second-brain-init/ui/static/app.js": "cc1189f6b550974a9cf9f9432978fa4f21dbb429c52a1d216b572ce84be5fffe",
+    "quanttide-asset/loops/second-brain-init/ui/static/index.html": "e8c6c49b808c75c6af0f4e16a5b1b089dfb99bdd78c628415d9ecaf3e3701980"
+  }
+}

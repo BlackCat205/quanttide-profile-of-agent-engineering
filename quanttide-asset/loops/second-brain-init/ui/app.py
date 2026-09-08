@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import io
+import zipfile
 import importlib.util
 import json
 import os
@@ -30,7 +32,8 @@ import engine as e
 sys.path.insert(0,str(HERE))
 import survey
 from github_login import Login
-VERSION='0.5.0'
+import repair
+VERSION='0.6.0'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -116,7 +119,9 @@ class Studio:
             e.require(key not in self.active,'这份任务正在处理中，请等待。')
             self.active.add(key)
         def worker():
-            try:fn()
+            try:
+                e.verification_observer.callback=lambda progress:e.save(folder/'verification-progress.json',progress)
+                fn()
             except Exception as exc:self.set_meta(folder,status='paused',error=cleaned_error(exc))
             finally:
                 with self.guard:self.active.discard(key)
@@ -219,14 +224,14 @@ class Studio:
             e.require(key not in self.active,'正在处理中。')
             self.set_meta(folder,status='verifying',error=None)
             def task():
-                plan=e.load_plan(folder);r=e.verify(plan,read(folder/'approval-record.json'))
+                plan=e.load_plan(folder,readonly=True);r=e.verify(plan,read(folder/'approval-record.json'))
                 e.save(folder/'verification-report.json',r);self.build_report(folder)
                 self.set_meta(folder,status='completed' if r['status']=='passed' else 'paused',error=None if r['status']=='passed' else '有检查未通过，请查看报告中的实际结果。')
             self.spawn(folder,task)
         return {'id':key}
 
     def build_report(self,folder):
-        plan=e.load_plan(folder);raw=read(folder/'verification-report.json',{});provider=e.Provider(plan['workspace'],plan['provider'],plan['organization'])
+        plan=e.load_plan(folder,readonly=True);raw=read(folder/'verification-report.json',{});provider=e.Provider(plan['workspace'],plan['provider'],plan['organization'])
         root_name=plan['config']['root_repo']
         d=plan['config']['domain'];target='quanttide-'+d['short_name'];repo=provider.repo(target)
         specification=e.read_yaml(e.SPEC);mapping=e.asset_map(d,specification)
@@ -254,10 +259,59 @@ class Studio:
         repos=[x for x in details if x.get('check')=='repository']
         item('synchronized','是否还有未保存或不同步的修改','工作仓库干净，本地与对应远端的提交一致。',f'{sum(bool(x["passed"]) for x in repos)}/{len(repos)} 个仓库通过检查。',len(repos)==len(plan['names']) and all(x['passed'] for x in repos),B)
         failed=[x for x in details if not x.get('passed')]
+        for row in items:
+            checks=mounts if row['key']=='mounts' else repos if row['key']=='synchronized' else []
+            if checks and not all(x['passed'] for x in checks) and all(x['passed'] or x.get('status')=='unknown' for x in checks):
+                row.update(status='unknown',actual='远端读取未完成，暂时无法核验；详见下方逐项记录。')
         signature=e.digest({'plan_id':plan['id'],'rows':items,'files':{x: e.text_at(repo,x) for x in ['README.md','LICENSE','CHANGELOG.md','.gitmodules']},'heads':{name:e.git(provider.repo(name),'rev-parse','HEAD',check=False).stdout for name in exists}})
-        result={'checked_at':raw.get('at',e.now()),'signature':signature,'provider':plan['provider'],'rows':items,'technical_passed':all(x['status']=='passed' for x in items) and raw.get('status')=='passed','failures':failed,'repositories':[{'name':x['repo'],'commit':x.get('commit'),'checked_at':x.get('checked_at'),'url':x.get('url'),'passed':x['passed']} for x in repos],'account':plan.get('github_identity'),'source_versions':plan['sources'],'simulated':self.test_mode or bool(read(folder/'approval-record.json',{}).get('simulated')),'scope':'本地 Git 流程；未操作真实 GitHub。' if plan['provider']=='local' else '已使用真实 GitHub；逐项结果以执行日志为准。'}
+        result={'checked_at':raw.get('at',e.now()),'signature':signature,'provider':plan['provider'],'rows':items,'technical_passed':all(x['status']=='passed' for x in items) and raw.get('status')=='passed','failures':failed,'repositories':[{'name':x['repo'],'commit':x.get('commit'),'checked_at':x.get('checked_at'),'url':x.get('url'),'passed':x['passed'],'status':x.get('status','passed' if x['passed'] else 'failed')} for x in repos],'account':plan.get('github_identity'),'source_versions':plan['sources'],'simulated':self.test_mode or bool(read(folder/'approval-record.json',{}).get('simulated')),'scope':'本地 Git 流程；未操作真实 GitHub。' if plan['provider']=='local' else '已使用真实 GitHub；逐项结果以执行日志为准。'}
         e.save(folder/'ui-report.json',result)
         return result
+
+    def repair_task(self,key,payload,execute=False):
+        folder=self.folder(key)
+        with self.guard:
+            e.require(not self.active,'请等待当前任务完成。')
+            e.require(read(folder/'ui.json')['status']=='paused','只支持暂停任务。')
+            self.set_meta(folder,status='verifying',error=None)
+            def task():
+                if execute:
+                    e.require(payload.get('confirmed') is True,'请确认仅补交所列文件。')
+                    repair.apply(folder,payload.get('repair_id'))
+                    plan=e.load_plan(folder,readonly=True)
+                    report=e.verify(plan,read(folder/'approval-record.json'))
+                    e.save(folder/'verification-report.json',report);self.build_report(folder)
+                    self.set_meta(folder,status='completed' if report['status']=='passed' else 'paused',error=None if report['status']=='passed' else '补交完成；仍有项目未通过或无法核验，请查看报告。')
+                else:
+                    repair.preview(folder)
+                    self.set_meta(folder,status='paused',error='补交方案已准备好，请查看文件内容后确认。')
+            self.spawn(folder,task)
+        return {'id':key}
+
+    def diagnostics(self,key):
+        folder=self.folder(key)
+        e.require(key not in self.active,'请等当前操作结束再导出诊断包。')
+        # Deliberate projection: no request prose, credentials, source documents or local absolute paths.
+        plan=read(folder/'execution-plan.json',{});log=read(folder/'execution-log.json',{})
+        checkpoints={name:{k:v for k,v in state.items() if k in ('local','remote','status','branch','repository_id','owner_id','remote_exists')} for name,state in log.get('checkpoint',{}).items()}
+        def scrub(value):
+            if isinstance(value,dict):return {k:scrub(v) for k,v in value.items()}
+            if isinstance(value,list):return [scrub(v) for v in value]
+            if isinstance(value,str):
+                value=re.sub(r'(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)','[凭据已移除]',value)
+                value=re.sub(r'https?://[^\s/@]+:[^\s/@]+@','https://[凭据已移除]@',value)
+                value=re.sub(r'(?i)(token|password|authorization)\s*[:=]\s*\S+',r'\1=[已移除]',value)
+                value=value.replace(str(Path.home()),'[本机用户]').replace(str(self.storage),'[记录位置]')
+                return value
+            return value
+        report=read(folder/'verification-report.json',{})
+        report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
+        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','owned_files')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json')}}
+        out=io.BytesIO()
+        with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
+            for name,data in records.items():archive.writestr(name,json.dumps(scrub(data),ensure_ascii=False,indent=2))
+            archive.writestr('说明.txt','诊断包包含仓库名称、版本、检查时间与步骤记录。未包含需求正文、登录凭据、仓库文件或完整本机路径。旧日志保留历史含义；网络读取失败不证明资产不合格。')
+        return out.getvalue()
 
     def acceptance(self,key,payload):
         folder=self.folder(key)
@@ -277,7 +331,7 @@ class Studio:
 
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
-        result=dict(meta,completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        result=dict(meta,completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and plan.get('engine_sha256')==hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))
@@ -296,6 +350,11 @@ class Studio:
                 row['observed_commit']=before['remote']
                 row['action']='拟更新已有总入口' if before.get('remote_exists') and row['name']==root_name else '冲突：新建禁止复用' if before.get('remote_exists') else '拟新建本地仓库' if plan['provider']=='local' else '未发现可见仓库；仅尝试新建，重名时停止'
                 row['writes']=[op['kind'] for op in plan['operations'] if op['repo']==row['name']]
+        result['verification_progress']=read(folder/'verification-progress.json')
+        result['repair']=read(folder/'repair-plan.json')
+        result['repair_record']=read(folder/'repair-record.json')
+        if result['repair_record']:
+            result['events']=list(result['events'])+[dict(event,kind='repair-license',repo=(result['repair'] or {}).get('root','总入口'),status='passed' if event['status']=='pushed' else 'failed') for event in result['repair_record'].get('events',[])]
         result['report']=read(folder/'ui-report.json')
         acceptance=read(folder/'human-acceptance.json')
         if acceptance and result['report']:acceptance['stale']=acceptance['signature']!=result['report']['signature']
@@ -303,7 +362,7 @@ class Studio:
         return result
 
     def document(self,key,name):
-        folder=self.folder(key);plan=e.load_plan(folder)
+        folder=self.folder(key);plan=e.load_plan(folder,readonly=True)
         repo,sep,relative=name.partition('/')
         allowed={'README.md','LICENSE','CHANGELOG.md','.gitmodules','domains/README.md'}
         e.require(repo in plan['names'] and relative in allowed,'只能查看本次计划中的说明和登记文件。')
@@ -314,18 +373,20 @@ class Studio:
     def export(self,key):
         view=self.view(key);report=view.get('report');e.require(report,'尚无报告可导出。')
         esc=lambda x:html.escape(str(x))
-        rows=''.join('<tr><td>'+esc(x['title'])+'</td><td>'+esc(x['standard'])+'</td><td>'+esc(x['actual'])+'</td><td>'+('通过' if x['status']=='passed' else '未通过')+'</td><td>'+esc(x['source'])+'</td></tr>' for x in report['rows'])
+        rows=''.join('<tr><td>'+esc(x['title'])+'</td><td>'+esc(x['standard'])+'</td><td>'+esc(x['actual'])+'</td><td>'+({'passed':'通过','unknown':'暂时无法核验'}.get(x['status'],'发现问题'))+'</td><td>'+esc(x['source'])+'</td></tr>' for x in report['rows'])
         acceptance=view.get('acceptance')
         check=view.get('pre_execution')
         execution_evidence=('执行前复核：'+({'passed':'通过','blocked':'已阻止执行'}.get(check['status'],check['status']))+'；开始：'+check['started_at']+'；结束：'+check['finished_at']+'；'+check.get('reason','本次涉及 '+str(len(check['scope']))+' 个仓库。')) if check else '此历史记录未保存执行前复核证据。'
         github_links=''
         if report['provider']=='github':
             github_links='<h2>GitHub 实际产物</h2>'+''.join('<p><a href="'+esc(x['url'])+'">'+esc(x['name'])+'</a>；提交：'+esc(x.get('commit') or '未取得')+'；查询：'+esc(x.get('checked_at') or '未取得')+'</p>' for x in report.get('repositories',[]) if x.get('url'))
+        failures='<h2>逐项问题与无法核验记录</h2>'+''.join('<p>'+esc(x.get('repo') or (x.get('check',{}).get('repo') if isinstance(x.get('check'),dict) else '检查项'))+'：'+('暂时无法核验' if x.get('status')=='unknown' else '发现问题')+'；'+esc(x.get('reason',''))+'；检查时间：'+esc(x.get('checked_at') or report['checked_at'])+'</p>' for x in report.get('failures',[]))
+        repair_note='<h2>补交记录</h2><p>'+esc(view['repair_record'].get('status'))+'；提交：'+esc(view['repair_record'].get('commit','未取得'))+'；原执行记录保持不变。</p>' if view.get('repair_record') else ''
         human='尚未完成人工验收。'
         if acceptance:
             labels={'meaning':'领域内容','navigation':'资料导航','usability':'使用体验'}
             human=('模拟反馈，不能作为真实用户验收。' if acceptance['simulated'] else '验收人：'+acceptance['reviewer'])+'；'+('旧报告意见，需重新确认。' if acceptance['stale'] else '；'.join(labels[k]+'：'+('通过' if v=='passed' else '需改进') for k,v in acceptance['choices'].items()))+'；意见：'+acceptance['notes']
-        return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>第二大脑验收报告</title><style>body{font:16px/1.7 system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#18352f}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd9d2;padding:12px;text-align:left;overflow-wrap:anywhere}h1{font-size:28px}@media print{body{margin:0}}</style><h1>'+esc(view['title'])+' · 验收报告</h1><p>检查时间：'+esc(report['checked_at'])+'</p><p>任务状态：'+esc({'completed':'已完成','paused':'已暂停','verifying':'检查中'}.get(view['status'],view['status']))+'</p><p>'+esc(report['scope'])+'</p><p>确认方式：'+('模拟确认（自动化测试）' if report['simulated'] else '已记录审阅者确认')+'</p><table><tr><th>检查项目</th><th>标准</th><th>实际结果</th><th>状态</th><th>依据</th></tr>'+rows+'</table>'+github_links+'<h2>执行前复核</h2><p>'+esc(execution_evidence)+'</p><h2>人工验收</h2><p>'+esc(human)+'</p><h2>验证边界</h2><p>配套仓库是初始骨架，不代表业务应用已开发。技术检查通过不代表领域内容准确。此工具尚未作为资产云在线页面部署。</p></html>'
+        return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>第二大脑验收报告</title><style>body{font:16px/1.7 system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#18352f}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd9d2;padding:12px;text-align:left;overflow-wrap:anywhere}h1{font-size:28px}@media print{body{margin:0}}</style><h1>'+esc(view['title'])+' · 验收报告</h1><p>检查时间：'+esc(report['checked_at'])+'</p><p>任务状态：'+esc({'completed':'已完成','paused':'已暂停','verifying':'检查中'}.get(view['status'],view['status']))+'</p><p>'+esc(report['scope'])+'</p><p>确认方式：'+('模拟确认（自动化测试）' if report['simulated'] else '已记录审阅者确认')+'</p><table><tr><th>检查项目</th><th>标准</th><th>实际结果</th><th>状态</th><th>依据</th></tr>'+rows+'</table>'+github_links+failures+repair_note+'<h2>执行前复核</h2><p>'+esc(execution_evidence)+'</p><h2>人工验收</h2><p>'+esc(human)+'</p><h2>验证边界</h2><p>配套仓库是初始骨架，不代表业务应用已开发。技术检查通过不代表领域内容准确。此工具尚未作为资产云在线页面部署。</p></html>'
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
@@ -333,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
         raw=json.dumps(data,ensure_ascii=False).encode() if isinstance(data,(dict,list)) else data.encode() if isinstance(data,str) else data
         self.send_response(status);self.send_header('Content-Type',content_type);self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer')
         self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-        if download:self.send_header('Content-Disposition','attachment; filename="second-brain-acceptance.html"')
+        if download:self.send_header('Content-Disposition','attachment; filename="'+('second-brain-diagnostics.zip' if content_type=='application/zip' else 'second-brain-acceptance.html')+'"')
         self.end_headers();self.wfile.write(raw)
     def guard(self):
         expected='127.0.0.1:'+str(self.server.server_port)
@@ -355,6 +416,8 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/naming-rules':return self.send(200,naming_rules())
             survey_match=re.fullmatch('/api/surveys/([a-f0-9]{16})',path)
             if survey_match:return self.send(200,studio.survey_view(survey_match[1]))
+            diagnostic=re.fullmatch('/api/runs/([a-f0-9]{16})/diagnostics',path)
+            if diagnostic:return self.send(200,studio.diagnostics(diagnostic[1]),'application/zip',True)
             m=re.fullmatch('/api/runs/([a-f0-9]{16})(/export)?',path)
             if m:return self.send(200,studio.export(m[1]),'text/html; charset=utf-8',True) if m[2] else self.send(200,studio.view(m[1]))
             self.send(404,{'error':'找不到此页面。'})
@@ -372,10 +435,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/github/cancel':return self.send(200,studio.login.cancel())
             if path=='/api/plan':return self.send(200,studio.create(payload))
             if path=='/api/survey':return self.send(200,studio.start_survey(payload))
-            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document)',path)
+            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')
             elif action=='verify':data=studio.verify(key)
+            elif action in ('repair-preview','repair-apply'):data=studio.repair_task(key,payload,action=='repair-apply')
             elif action=='acceptance':data=studio.acceptance(key,payload)
             else:data=studio.document(key,payload.get('name',''))
             self.send(200,data)

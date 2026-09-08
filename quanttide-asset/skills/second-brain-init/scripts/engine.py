@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-VERSION = '0.2.1'
+VERSION = '0.3.0'
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
@@ -56,6 +56,21 @@ def slug(value):
     require(isinstance(value, str) and len(value) < 100 and bool(SLUG.fullmatch(value)), f'非法名称：{value!r}')
     return value
 
+def github_owner(value):
+    require(isinstance(value,str) and bool(re.fullmatch(r'[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*',value)) and len(value)<=39, 'GitHub 账号名只能包含字母、数字和单个连字符，最多 39 字符。')
+    return value
+
+def github_identity(owner):
+    owner=github_owner(owner)
+    user=json.loads(command(['gh','api','user']).stdout)
+    target=user if user['login'].lower()==owner.lower() else json.loads(command(['gh','api','users/'+owner]).stdout)
+    require(target['type']=='Organization' or target['id']==user['id'], '只能创建在当前登录个人账号或获授权组织下，不能写入其他个人账号。')
+    return {'login':user['login'],'id':user['id'],'owner':target['login'],'owner_id':target['id'],'owner_type':target['type']}
+
+def check_identity(plan):
+    if plan['provider']=='github':
+        require(github_identity(plan['organization'])==plan.get('github_identity'), '登录账号或目标归属已变化，请重新登录并生成方案。')
+
 def safe_path(base, relative):
     require(isinstance(relative, str) and '\\' not in relative, '路径须使用 / 分隔。')
     p = PurePosixPath(relative)
@@ -70,7 +85,13 @@ def safe_path(base, relative):
     return target
 
 def command(argv, cwd=None, check=True):
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='Never')
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='Never', GH_HOST='github.com', GH_PROMPT_DISABLED='1')
+    if str(argv[0])=='git':
+        # Process-scoped: Git and REST use the same gh credentials, without changing global Git config.
+        count=int(env.get('GIT_CONFIG_COUNT','0'))
+        for key,value in [('credential.https://github.com.helper',''),('credential.https://github.com.helper','!gh auth git-credential')]:
+            env['GIT_CONFIG_KEY_'+str(count)]=key;env['GIT_CONFIG_VALUE_'+str(count)]=value;count+=1
+        env['GIT_CONFIG_COUNT']=str(count)
     try:
         result = subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
     except FileNotFoundError:
@@ -104,7 +125,7 @@ class Provider:
     def __init__(self, workspace, kind='local', organization='quanttide'):
         self.workspace = Path(workspace).resolve()
         self.kind = kind
-        self.organization = slug(organization)
+        self.organization = github_owner(organization)
         require(kind in ('local', 'github'), 'provider 只能为 local 或 github。')
 
     def repo(self, name):
@@ -125,10 +146,11 @@ class Provider:
             return {'exists': False, 'branch': 'main', 'visibility': 'public'}
         data = json.loads(result.stdout)
         require(data.get('visibility') == 'public', '本插件仅处理公开第二大脑；检测到非公开仓库。')
-        return {'exists': True, 'branch': data['default_branch'], 'visibility': 'public'}
+        require(data['full_name'].lower()==(self.organization+'/'+name).lower(), '仓库重定向到其他位置，停止。')
+        return {'exists': True, 'branch': data['default_branch'], 'visibility': 'public', 'id':data['id'], 'owner_id':data['owner']['id'], 'can_push':bool(data.get('permissions',{}).get('push')), 'archived':data.get('archived',False)}
 
-    def head(self, name):
-        info = self.info(name)
+    def head(self, name, info=None):
+        info = self.info(name) if info is None else info
         if not info['exists']:
             return None
         raw = command(['git', 'ls-remote', self.remote(name), 'refs/heads/'+info['branch']]).stdout.strip()
@@ -145,11 +167,17 @@ class Provider:
                 remote.parent.mkdir(parents=True, exist_ok=True)
                 command(['git', 'init', '--bare', '--initial-branch=main', remote])
             else:
-                command(['gh', 'api', '--method', 'POST', f'orgs/{self.organization}/repos', '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
+                identity=github_identity(self.organization)
+                endpoint='user/repos' if identity['owner_type']=='User' else 'orgs/'+identity['owner']+'/repos'
+                command(['gh', 'api', '--method', 'POST', endpoint, '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             command(['git', 'clone', self.remote(name), path])
         require((path / '.git').exists(), f'{path} 不是 Git 仓库。')
+        if self.kind == 'github':
+            identity=github_identity(self.organization)
+            git(path,'config','user.name',identity['login'])
+            git(path,'config','user.email',str(identity['id'])+'+'+identity['login']+'@users.noreply.github.com')
         if self.kind == 'local':
             git(path, 'config', 'user.name', 'Second Brain Local Test')
             git(path, 'config', 'user.email', 'second-brain@example.invalid')
@@ -175,7 +203,9 @@ def snapshot(provider, names, strict=False):
     result = {}
     for name in sorted(set(names)):
         path = provider.repo(name)
-        item = {'remote': provider.head(name), 'remote_exists': provider.info(name)['exists'], 'local': None, 'status': None, 'rules': {}}
+        info=provider.info(name)
+        item = {'remote': provider.head(name,info), 'remote_exists': info['exists'], 'local': None, 'status': None, 'rules': {}}
+        if provider.kind=='github':item['repository_id']=info.get('id');item['owner_id']=info.get('owner_id')
         if path.exists():
             require((path/'.git').exists(), f'已有目录不是仓库：{name}')
             item['local'] = git(path, 'rev-parse', 'HEAD', check=False).stdout.strip()
@@ -209,7 +239,8 @@ def validate_config(cfg, spec):
     require(cfg.get('scenario') in spec['scenarios'], '请明确选择 scenario，支持范围见示例。')
     require(cfg.get('schema_version') == 1, 'schema_version 必须为 1。')
     scenario = cfg['scenario']
-    known = {'schema_version','scenario','domain','target_repo','asset_type','assets','mounts','root_repo','register_root','renames','reference_repos','version','notes','new_repositories_only'}
+    require(isinstance(cfg.get('new_root',False),bool) and (not cfg.get('new_root') or scenario=='new-domain'), 'new_root 仅适用于新建领域，须为布尔值。')
+    known = {'schema_version','scenario','domain','target_repo','asset_type','assets','mounts','root_repo','register_root','renames','reference_repos','version','notes','new_repositories_only','new_root'}
     require(not set(cfg)-known, '未知配置字段：'+', '.join(sorted(set(cfg)-known)))
     require(isinstance(cfg.get('new_repositories_only',False),bool), 'new_repositories_only 必须为布尔值。')
     require(not cfg.get('new_repositories_only') or scenario=='new-domain', '仅新建领域可启用禁止复用模式。')
@@ -264,6 +295,8 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         require(shutil.which('gh'), 'GitHub 模式需要 GitHub CLI 和已登录账号。')
         command(['gh','auth','status'])
     provider = Provider(work, provider_kind, organization)
+    identity=github_identity(organization) if provider_kind=='github' else None
+    if identity:organization=identity['owner'];provider.organization=organization
     scenario = cfg['scenario']
     domain = cfg.get('domain', {})
     target = cfg.get('target_repo') or ('quanttide-'+domain['short_name'] if domain else 'quanttide-'+cfg.get('asset_type','profile'))
@@ -276,7 +309,7 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         names.add(slug(repo))
         ops.append(dict(id=f'{len(ops)+1:03}', kind=kind, repo=repo, **kwargs))
     def ensure(name, allow, title=None):
-        add('ensure-repo', name, allow_create=allow, title=title or name, require_new=bool(cfg.get('new_repositories_only') and name!=root))
+        add('ensure-repo', name, allow_create=allow, title=title or name, require_new=bool((cfg.get('new_repositories_only') and name!=root) or (cfg.get('new_root') and name==root)))
     def finish(name):
         add('finish', name)
     mounts = list(cfg.get('mounts', []))
@@ -304,7 +337,7 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         add('catalog', target)
         finish(target)
         if register:
-            ensure(root, provider_kind == 'local')
+            ensure(root, provider_kind == 'local' or cfg.get('new_root',False))
             path = ('assets/' if scenario == 'aggregate-container' else 'domains/')+target
             add('mount', root, child=target, path=path)
             checks.append({'kind':'mount','repo':root,'child':target,'path':path})
@@ -333,6 +366,11 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         add('release', target, version=str(cfg['version']), notes=cfg['notes'])
         checks.append({'kind':'tag','repo':target,'version':str(cfg['version'])})
     initial = snapshot(provider, names, strict=True)
+    if provider_kind=='github':
+        for name in names:
+            if initial[name]['remote_exists']:
+                info=provider.info(name)
+                require(info.get('owner_id')==identity['owner_id'] and info.get('can_push') and not info.get('archived'), '目标归属、写入权限或归档状态不允许本次操作：'+name)
     for op in ops:
         if op['kind'] == 'ensure-repo':
             require(op['allow_create'] or initial[op['repo']]['remote'], f'已有仓库场景要求远端存在：{op["repo"]}')
@@ -350,11 +388,12 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
             src = run/'inspection'/name
             src.parent.mkdir(parents=True, exist_ok=True)
             command(['git','clone','--depth','1',provider.remote(name),src])
+        require(git(src,'rev-parse','HEAD').stdout.strip()==state['remote'], '读取说明期间仓库版本已变化，请重新生成方案。')
         inspection[name] = {p: text_at(src,p) for p in ['README.md','AGENTS.md','.gitmodules','.quanttide/agent/contract.yaml','.quanttide/docs/contract.yaml','.quanttide/asset/contract.yaml']}
         if scenario == 'new-domain' and name == target:
             require('second-brain-init:domain:begin' in inspection[name]['README.md'], '同名领域已存在；请使用 complete-existing 调查补全，不能按新建处理。')
     plan = dict(schema_version=2, plugin='second-brain-init', version=VERSION, created_at=now(), scenario=scenario,
-                provider=provider_kind, organization=organization, workspace=str(work), config=cfg,
+                provider=provider_kind, organization=organization, github_identity=identity, workspace=str(work), config=cfg,
                 operations=ops, checks=checks, names=sorted(names), before=initial, inspection=inspection,
                 engine_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), spec_sha256=hashlib.sha256(SPEC.read_bytes()).hexdigest(), sources=spec['sources'])
     plan['id'] = digest(plan)
@@ -421,6 +460,10 @@ class Executor:
         kind = op['kind']
         if kind == 'ensure-repo':
             provider.ensure(op['repo'],op['allow_create'],op['title'],require_new=op.get('require_new',False))
+            if not self.plan['before'][op['repo']]['remote_exists']:
+                container=self.plan['scenario']=='aggregate-container' and op['repo']!=self.plan['config'].get('root_repo','quanttide')
+                self.write(repo,'LICENSE',APACHE if container else CC,missing_only=True)
+                self.write(repo,'CHANGELOG.md','# 变更记录\n\n## [Unreleased]\n\n## [0.1.0]\n\n- 初始化第二大脑仓库。\n',missing_only=True)
         elif kind == 'mount':
             path, url = op['path'], provider.remote(op['child'])
             existing = modules(repo)
@@ -554,7 +597,9 @@ def verify(plan, approval=None):
             for filename in ['README.md','CHANGELOG.md']:
                 content = text_at(path,filename)
                 if content: require(not markdown_errors(content), filename+'：'+'；'.join(markdown_errors(content)))
-            details.append({'check':'repository','repo':name,'passed':True})
+            if not plan['before'][name]['remote_exists']:
+                require(all(text_at(path,f) for f in ['README.md','LICENSE','CHANGELOG.md']), '新仓库缺少说明、许可或变更记录')
+            details.append({'check':'repository','repo':name,'passed':True,'commit':git(path,'rev-parse','HEAD').stdout.strip(),'checked_at':now(), 'url':'https://github.com/'+plan['organization']+'/'+name if plan['provider']=='github' else None})
         except WorkflowError as exc:
             details.append({'check':'repository','repo':name,'passed':False,'reason':str(exc)})
     for check in plan['checks']:
@@ -613,6 +658,7 @@ def apply(run):
     approval = read_json(run/'approval-record.json')
     require(approval.get('accepted') is True and approval.get('plan_id')==plan['id'], '确认记录不对应此计划。')
     require(not approval.get('simulated') or plan['provider']=='local', 'GitHub 模式不能使用模拟反馈。')
+    check_identity(plan)
     with execution_locks(run,plan['workspace']):
         state_file = run/'execution-log.json'
         provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
@@ -633,19 +679,27 @@ def apply(run):
         try:
             for op in plan['operations']:
                 if op['id'] in state['completed']: continue
+                check_identity(plan)
+                state['current']={'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'running'}
+                state['events'].append(dict(state['current']));save(state_file,state)
                 require(snapshot(provider,plan['names']) == state['checkpoint'], '执行过程中仓库已变化；停止并保留已完成记录，请重新调查。')
                 executor.execute(op)
                 state['completed'].append(op['id'])
                 state['events'].append({'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed'})
                 state['checkpoint']=snapshot(provider,plan['names'])
+                state['current']['status']='passed'
                 save(state_file,state)
+            state['current']={'kind':'verify','repo':'全部目标仓库','at':now(),'status':'running'};save(state_file,state)
             report=verify(plan,approval)
             save(run/'verification-report.json',report)
             require(report['status']=='passed','结果校验未通过，请查看 verification-report.json。')
             state['status']='completed'
+            state['current']['status']='passed'
         except (WorkflowError, OSError, KeyboardInterrupt) as exc:
             state['status']='paused'
             state['error']=str(exc) or '用户中断'
+            if state.get('current'):
+                state['current']['status']='failed';state['events'].append(dict(state['current'],at=now()))
             # Keep the last successful checkpoint; do not bless partial mutations as known-safe.
             raise WorkflowError(state['error']) from None
         finally:

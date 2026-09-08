@@ -15,7 +15,7 @@ description: 根据量潮公开资产章程创建或维护领域第二大脑，�
 
 1. 根据 [请求配置](references/request-schema.md) 选择场景，结合 [场景规则](references/scenarios.md) 和 [契约规则](references/contract-rules.md) 理解用户意图。不要仅凭关键字或 `data/`、`docs/` 目录存在就判定领域类型。
 2. 读取工作区内各目标仓库的 AGENTS 和契约。将现有原文、领域边界、名称先例纳入判断；规则冲突时列出冲突再处理。自然语言请求不直接作为命令执行。
-3. 写出请求 YAML，运行 `python scripts/engine.py plan --config request.yaml --workspace <工作区> --run-dir <记录目录>`。两目录必须分开。默认 local 模式创建本地 bare 仓库；需要操作公开 GitHub 时显式指定 `--provider github --organization quanttide`。
+3. 写出请求 YAML，运行 `python scripts/engine.py plan --config request.yaml --workspace <工作区> --run-dir <记录目录>`。两目录必须分开。默认 local 模式创建本地 bare 仓库；需要操作公开 GitHub 时显式指定 `--provider github --organization <已获准的账号或组织>`。
 4. 展示 `execution-plan.md` 与 JSON 内的调查结果、文档输入、操作范围和计划编号。用户修订时生成新计划；不能沿用旧确认。
 5. 用户已经明确认可具体计划后，运行 `approve --run-dir <记录目录> --reviewer <审阅者> --accept <完整计划编号>`；也可以让用户在终端交互确认。没有针对具体内容的确认，不代用户写入确认记录。测试用 `--simulated` 必须如实标为模拟反馈，且只能用于 local 模式。
 6. 运行 `apply --run-dir <记录目录>`，由执行器完成已确认的动作、分层提交推送和结果验证。没有确认记录时程序拒绝执行。执行失败会暂停。

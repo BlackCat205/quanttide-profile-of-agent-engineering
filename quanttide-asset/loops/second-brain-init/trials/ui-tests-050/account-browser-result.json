@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "checked_at": "2026-09-08T01:46:48.224Z",
+  "platform": "linux",
+  "checks": [
+    "Personal GitHub option is enabled in standard launcher",
+    "Device code points to official GitHub authorization page",
+    "Waiting authorization can be cancelled",
+    "Cancellation removes one-time code",
+    "Canonical mixed-case account fills target",
+    "Next creation keeps GitHub mode",
+    "Next creation keeps selected root",
+    "After completion next creation uses existing root",
+    "Account form fits mobile viewport",
+    "Account UI test makes no creation plans or repositories",
+    "No JavaScript errors"
+  ],
+  "errors": [],
+  "github_api": "simulated",
+  "real_github": false,
+  "real_windows": false
+}

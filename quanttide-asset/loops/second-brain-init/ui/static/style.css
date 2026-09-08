@@ -5,3 +5,5 @@
 .field-feedback{display:block;min-height:1.5em;overflow-wrap:anywhere}.field-feedback.invalid{color:#a52e2e}input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:#a52e2e}.preflight-row{padding:12px 0;border-bottom:1px solid #d9e4de}.preflight-row p{margin:5px 0}.manual{color:#825b16}
 
 #survey-result{overflow-wrap:anywhere}#survey-result pre{white-space:pre-wrap;max-height:320px;overflow:auto}#observation-info{overflow-wrap:anywhere}
+
+#operation-events{max-height:240px;overflow:auto;padding-left:24px;overflow-wrap:anywhere}#operation-events li{padding:5px 0}#github-code{font-size:22px;font-weight:700}#github-results p{overflow-wrap:anywhere}#github-results small{display:block}

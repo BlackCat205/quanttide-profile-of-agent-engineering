@@ -24,7 +24,7 @@ function check(condition,message){if(!condition)throw new Error(message);checks.
  await page.locator('#fill-example').click();
  check((await page.locator('#feedback-short_name').textContent()).includes('quanttide-sample'),'Valid short name previews repository name');
  check((await page.locator('#feedback-english_name').textContent()).includes('quanttide-journal-of-sample-engineering'),'English name previews asset suffix');
- const surveyFixture={id:'fixture',status:'completed',domain:{chinese_name:'模拟调查',short_name:'sample',english_name:'sample-engineering'},report:{organization:'quanttide',started_at:'2026-01-01T00:00:00Z',finished_at:'2026-01-01T00:00:01Z',scope:'模拟响应：仅测试界面显示',repositories:[{name:'quanttide',status:'exists',action:'拟更新总入口',checked_at:'2026-01-01T00:00:00Z',commit:'abc123'},{name:'quanttide-sample',status:'unknown',reason:'未发现公开资源，不能证明名称可用。',checked_at:'2026-01-01T00:00:01Z'}],rules:{status:'changed',adopted:{commit:'old-rule'},latest_file:{sha:'new-rule'}},documents:{'domains/README.md':{status:'ok',text:'# 模拟总目录'}},note:'这是假响应，不代表量潮当前状态。'}};
+ const surveyFixture={id:'fixture',status:'completed',domain:{chinese_name:'模拟调查',short_name:'sample',english_name:'sample-engineering'},report:{organization:'quanttide',started_at:'2026-01-01T00:00:00Z',finished_at:'2026-01-01T00:00:01Z',scope:'模拟响应：仅测试界面显示',repositories:[{name:'quanttide',status:'exists',action:'已找到总入口，当前仅查看，未修改',checked_at:'2026-01-01T00:00:00Z',commit:'abc123'},{name:'quanttide-sample',status:'unknown',reason:'未发现公开资源，不能证明名称可用。',checked_at:'2026-01-01T00:00:01Z'}],rules:{status:'changed',adopted:{commit:'old-rule'},latest_file:{sha:'new-rule'}},documents:{'domains/README.md':{status:'ok',text:'# 模拟总目录'}},note:'这是假响应，不代表量潮当前状态。'}};
  await page.route('**/api/survey',route=>route.fulfill({json:{id:'fixture'}}));
  await page.route('**/api/surveys/fixture',route=>route.fulfill({json:surveyFixture}));
  await page.locator('#survey-button').click();await page.waitForFunction(()=>document.querySelector('#survey-result').textContent.includes('abc123'));
@@ -50,6 +50,8 @@ await capture(page,{path:path.join(out,'01-create.png'),fullPage:true});
  await capture(page,{path:path.join(out,'03-review.png'),fullPage:true});
  await page.locator('#reviewer').fill('浏览器自动化测试');await page.locator('#confirmed').check();await page.locator('#execute-button').click();
  await page.locator('#result-screen').waitFor({state:'visible',timeout:120000});
+ check((await page.locator('#operation-events').textContent()).includes('保存修改并推送仓库'),'Progress names actual repository operations');
+ check((await page.locator('#operation-events').textContent()).includes('开始'),'Progress includes actual started events');
  check((await page.locator('#execution-check').textContent()).includes('通过'),'Result exposes real pre-execution recheck record');
  check((await page.locator('#technical-status').textContent()).includes('技术检查通过'),'Real Git execution passes technical checks');
  check(await page.locator('.report-row').count()===7,'Seven plain-language checks show actual evidence');

@@ -89,7 +89,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(state['status'],'paused'); self.assertEqual(len(state['completed']),4)
         self.assertEqual(e.apply(run)['status'],'passed')
         events=e.read_json(run/'execution-log.json')['events']
-        self.assertEqual(len({x['op'] for x in events}),len(events))
+        completed=[x for x in events if x['status']=='passed']
+        self.assertEqual(len(completed),len(plan['operations']))
+        self.assertEqual(len({x['op'] for x in completed}),len(completed))
+        self.assertTrue(any(x['status']=='failed' for x in events))
     def test_new_plan_refuses_dirty_existing_repository(self):
         self.execute()
         (self.provider.repo('quanttide-sample')/'README.md').write_text('# 人工修改\n',encoding='utf-8')

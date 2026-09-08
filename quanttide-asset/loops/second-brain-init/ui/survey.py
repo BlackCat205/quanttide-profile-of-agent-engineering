@@ -30,22 +30,22 @@ def text_file(owner,repo,path,ref=None):
     try:return {'status':'ok','sha':data['sha'],'text':base64.b64decode(data['content'],validate=False).decode('utf-8')}
     except (KeyError,ValueError,UnicodeError):return {'status':'unknown','reason':'文件内容无法解码。'}
 
-def inspect(organization,names,source):
-    report={'started_at':now(),'organization':organization,'access':'仅公开、未登录的只读调查','scope':'总入口 quanttide 与本次目标仓库；不是组织全部仓库或持续监控。','repositories':[],'documents':{},'rules':{'adopted':source}}
+def inspect(organization,names,source,root='quanttide'):
+    report={'started_at':now(),'organization':organization,'access':'仅公开、未登录的只读调查','scope':'总入口 '+root+' 与本次目标仓库；不是组织全部仓库或持续监控。','repositories':[],'documents':{},'rules':{'adopted':source}}
     for name in names:
         row={'name':name,'url':'https://github.com/'+organization+'/'+name,'checked_at':now()}
         info=get('repos/'+organization+'/'+name)
         if info['status']!='ok':row.update(status='unknown',reason=info['reason'],http_status=info.get('http_status'))
         else:
-            data=info['data'];row.update(status='exists',default_branch=data['default_branch'],action='拟更新总入口' if name=='quanttide' else '冲突：已有仓库，网页新建不会复用')
+            data=info['data'];row.update(status='exists',default_branch=data['default_branch'],action='已找到总入口，当前仅查看，未修改' if name==root else '冲突：已有仓库，网页新建不会复用')
             head=get('repos/'+organization+'/'+name+'/commits/'+quote(data['default_branch'],safe=''))
             if head['status']=='ok':row['commit']=head['data']['sha']
             else:row.update(version_status='unknown',reason=head['reason'])
         report['repositories'].append(row)
-    root=next((r for r in report['repositories'] if r['name']=='quanttide'),{})
-    if root.get('commit'):
+    root_row=next((r for r in report['repositories'] if r['name']==root),{})
+    if root_row.get('commit'):
         for path in ('README.md','domains/README.md','.gitmodules'):
-            report['documents'][path]=text_file(organization,'quanttide',path,root['commit'])
+            report['documents'][path]=text_file(organization,root,path,root_row['commit'])
     owner,repo=source['repository'].split('/')
     adopted=text_file(owner,repo,source['path'],source['commit'])
     latest=text_file(owner,repo,source['path'])

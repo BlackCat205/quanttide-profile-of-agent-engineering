@@ -46,7 +46,7 @@ class SurveyTests(unittest.TestCase):
             with patch.object(provider,'info',return_value={'exists':True}),patch.object(ui.e,'command') as cmd:
                 with self.assertRaisesRegex(ui.e.WorkflowError,'不能自动复用'):provider.ensure('quanttide-sample',True,'sample',require_new=True)
                 cmd.assert_not_called()
-            with patch.object(provider,'info',return_value={'exists':False}),patch.object(ui.e,'command',side_effect=ui.e.WorkflowError('创建冲突')) as cmd:
+            with patch.object(ui.e,'github_identity',return_value={'owner_type':'User'}),patch.object(provider,'info',return_value={'exists':False}),patch.object(ui.e,'command',side_effect=ui.e.WorkflowError('创建冲突')) as cmd:
                 with self.assertRaisesRegex(ui.e.WorkflowError,'创建冲突'):provider.ensure('quanttide-sample',True,'sample',require_new=True)
                 self.assertEqual(cmd.call_count,1)
                 self.assertIn('POST',cmd.call_args.args[0])
@@ -109,7 +109,7 @@ class ReliabilityUITests(UITests):
 
     def test_rule_update_blocks_github_plan_before_engine(self):
         self.studio.enable_github=True
-        with patch.object(ui.survey,'inspect',return_value={'rules':{'status':'changed'}}),patch.object(ui.e,'make_plan') as make:
+        with patch.object(ui.e,'github_identity',return_value={'owner_type':'User','id':1,'owner_id':1,'owner':'Example'}),patch.object(ui.survey,'inspect',return_value={'rules':{'status':'changed'}}),patch.object(ui.e,'make_plan') as make:
             key=self.json('/api/plan',dict(BASE,provider='github'))['id'];r=self.wait(key)
             self.assertEqual(r['status'],'paused');make.assert_not_called()
 

@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.1'
+VERSION='0.8.2'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -91,7 +91,7 @@ class Studio:
     def __init__(self,storage,enable_github=False,test_mode=False):
         self.storage=Path(storage).resolve();self.storage.mkdir(parents=True,exist_ok=True)
         self.enable_github=enable_github;self.test_mode=test_mode
-        self.guard=threading.RLock();self.active=set();self.login=Login()
+        self.guard=threading.RLock();self.active=set();self.request_log_errors={};self.login=Login()
         # Surviving records do not imply that a worker is still running after a restart.
         for folder in self.storage.glob('runs/*'):
             meta=read(folder/'ui.json',{})
@@ -141,8 +141,16 @@ class Studio:
         def worker():
             try:
                 def request_event(event):
-                    events=read(folder/'requests.json',[])
-                    events.append(event);e.save(folder/'requests.json',events[-2000:])
+                    try:
+                        with self.guard:
+                            events=read(folder/'requests.json',[])
+                            warning=self.request_log_errors.get(key)
+                            if warning:events.append(warning)
+                            events.append(event);e.save(folder/'requests.json',events[-2000:])
+                            self.request_log_errors.pop(key,None)
+                    except OSError:
+                        with self.guard:
+                            self.request_log_errors[key]={'target':None,'operation':'save-request-log','tool':'local-record','stage':'diagnostics','attempt':1,'started_at':e.now(),'status':'unknown','category':'local-file-busy','reason':'Windows 暂时占用请求日志；主任务未因此停止。'}
                 e.request_observer.callback=request_event
                 survey.observer.callback=request_event
                 e.request_observer.stage='preflight'
@@ -420,6 +428,7 @@ class Studio:
         records['diagnosis.json']['survey']={k:observation.get(k) for k in ('started_at','finished_at','access')}
         records['diagnosis.json']['survey']['rules']=survey.rules_diagnostic(observation.get('rules',{}))
         records['diagnosis.json']['requests']=read(folder/'requests.json',[])
+        records['diagnosis.json']['request_log_error']=self.request_log_errors.get(key)
         records['diagnosis.json']['connection_check']=read(folder/'connection-check.json')
         records['diagnosis.json']['partial_migration']=read(folder/'partial-migration.json')
         records['diagnosis.json']['pre_execution_rules']=read(folder/'pre-execution-check.json',{}).get('rules')

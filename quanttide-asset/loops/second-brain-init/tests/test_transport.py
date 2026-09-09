@@ -58,4 +58,24 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(args[:2],['gh','api'])
             self.assertIn('commits/feature%2Ftest',args[2])
             self.assertNotIn('ls-remote',args)
+    def test_atomic_save_retries_windows_file_busy_with_unique_temp(self):
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            target=Path(tmp)/'record.json';real_replace=e.os.replace;calls=[]
+            def busy_once(source,destination):
+                calls.append(Path(source).name)
+                if len(calls)==1:raise PermissionError(5,'file busy')
+                return real_replace(source,destination)
+            with patch.object(e.os,'replace',side_effect=busy_once),patch.object(e.time,'sleep'):
+                e.save(target,{'status':'ok'})
+            self.assertEqual(e.read_json(target),{'status':'ok'})
+            self.assertEqual(len(calls),2)
+            self.assertNotEqual(calls[0],'record.json.tmp')
+            self.assertFalse(list(Path(tmp).glob('*.tmp')))
+    def test_diagnostic_observer_failure_cannot_fail_network_command(self):
+        def blocked(_):raise PermissionError(5,'diagnostic file busy')
+        e.request_observer.callback=blocked
+        passed=subprocess.CompletedProcess([],0,'{}','')
+        with patch.object(e.subprocess,'run',return_value=passed):
+            self.assertEqual(e.command(['gh','api','repos/Example/test']).returncode,0)
 if __name__=='__main__':unittest.main()

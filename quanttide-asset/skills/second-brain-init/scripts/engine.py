@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import threading
 from datetime import datetime, timezone
@@ -19,12 +20,15 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.2'
+VERSION = '0.4.3'
 COMPATIBLE_ENGINE_SHA256S = {
     # 0.4.1: execution operations and generated content are unchanged. 0.4.2
     # replaces redundant Git read probes with authenticated GitHub API reads
     # and adds exact local-phase reconciliation for interrupted runs.
     'b186fe8ed1b59b4fbb2f3636870531f6e41ca6cb98e8fb1306719fa115ce1258',
+    # 0.4.2: same execution contract; 0.4.3 hardens local record writes and
+    # makes optional progress/request observers non-blocking.
+    '3269648a78a0547c79390a3ef18662fcd079434c878fccdcab0bf1a56b36e6ad',
 }
 verification_observer = threading.local()
 request_observer = threading.local()
@@ -51,12 +55,36 @@ def now():
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
+_save_locks_guard=threading.Lock()
+_save_locks={}
+
+def _save_lock(path):
+    key=str(Path(path).resolve())
+    with _save_locks_guard:
+        return _save_locks.setdefault(key,threading.RLock())
+
 def save(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + '.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    temp.replace(path)
+    payload=json.dumps(value,ensure_ascii=False,indent=2)+'\n'
+    with _save_lock(path):
+        temporary=None
+        try:
+            with tempfile.NamedTemporaryFile('w',encoding='utf-8',newline='\n',delete=False,
+                                             dir=path.parent,prefix='.'+path.name+'.',suffix='.tmp') as handle:
+                temporary=Path(handle.name);handle.write(payload);handle.flush();os.fsync(handle.fileno())
+            for attempt in range(8):
+                try:
+                    os.replace(temporary,path)
+                    temporary=None
+                    return
+                except PermissionError:
+                    if attempt==7:raise
+                    time.sleep(min(.05*(2**attempt),.4))
+        finally:
+            if temporary is not None:
+                try:temporary.unlink(missing_ok=True)
+                except OSError:pass
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
@@ -104,6 +132,12 @@ def command_kind(argv):
         i+=2 if args[i] in ('-c','-C','--git-dir','--work-tree') else 1
     return args[i] if i<len(args) else ''
 
+def notify_observer(callback,event):
+    """Observers are diagnostic only and must never change workflow outcome."""
+    if callback:
+        try:callback(event)
+        except Exception:pass
+
 def command(argv, cwd=None, check=True):
     args=list(map(str,argv));kind=command_kind(args)
     target=next((m.group(1).removesuffix('.git') for arg in args if (m:=re.fullmatch(r'https://github.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:/)?',arg))),None)
@@ -132,19 +166,19 @@ def command(argv, cwd=None, check=True):
             run_env['GIT_CONFIG_VALUE_'+str(count)]='HTTP/1.1';run_env['GIT_CONFIG_COUNT']=str(count+1)
         event={'target':target,'operation':kind,'tool':args[0],'stage':getattr(request_observer,'stage',None),'attempt':attempt+1,'started_at':now(),'status':'running','protocol':'HTTP/1.1' if compatibility else 'default'}
         started=time.monotonic()
-        if network and callback:callback(dict(event))
+        if network:notify_observer(callback,dict(event))
         try:
             result=subprocess.run(args,cwd=cwd,env=run_env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25 if readonly else 120)
         except FileNotFoundError:
             event.update(status='failed',category='missing-tool',finished_at=now())
-            if network and callback:callback(event)
+            if network:notify_observer(callback,event)
             raise WorkflowError(f'找不到 {args[0]}，请按使用说明安装。') from None
         except subprocess.TimeoutExpired:
             result=subprocess.CompletedProcess(args,124,'','timed out')
         transient=any(x in result.stderr.lower() for x in ('could not resolve','failed to connect','connection was reset','connection reset','timed out','recv failure','http/2','remote end hung up','502','503','504'))
         category='connection' if transient else 'authorization' if any(x in result.stderr.lower() for x in ('authentication','permission denied','403','401')) else 'git-or-service'
         event.update(status='passed' if result.returncode==0 else 'failed',category=None if result.returncode==0 else category,exit_code=result.returncode,finished_at=now(),elapsed_seconds=round(time.monotonic()-started,3))
-        if network and callback:callback(event)
+        if network:notify_observer(callback,event)
         if not result.returncode:
             if compatibility:request_observer.http1=True
             break
@@ -817,7 +851,7 @@ def verify(plan, approval=None):
     total=len(final_names)+len(plan['checks'])
     def progress(repo,label):
         callback=getattr(verification_observer,'callback',None)
-        if callback:callback({'repo':repo,'label':label,'completed':len(details),'total':total,'at':now()})
+        notify_observer(callback,{'repo':repo,'label':label,'completed':len(details),'total':total,'at':now()})
     for name in sorted(final_names):
         progress(name,'检查文件与远端提交（远端读取最多尝试 3 次）')
         path = provider.repo(name)

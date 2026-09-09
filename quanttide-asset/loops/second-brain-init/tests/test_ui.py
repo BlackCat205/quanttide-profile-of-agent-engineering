@@ -113,5 +113,16 @@ class UITests(unittest.TestCase):
         restarted=ui.Studio(self.temp.name,test_mode=True)
         self.assertEqual(restarted.view(key)['status'],'paused')
         self.assertIn('上次窗口服务',restarted.view(key)['error'])
+    def test_request_log_file_busy_does_not_pause_creation(self):
+        original=ui.e.save
+        def save(path,value):
+            if Path(path).name=='requests.json':raise PermissionError(5,'simulated Windows file busy')
+            return original(path,value)
+        with patch.object(ui.e,'save',side_effect=save):
+            key,v=self.plan()
+            self.json('/api/runs/'+key+'/execute',{'plan_id':v['plan']['id'],'confirmed':True,'reviewer':'automated-test'})
+            result=self.wait(key)
+        self.assertEqual(result['status'],'completed',result.get('error'))
+        self.assertEqual(self.studio.request_log_errors[key]['category'],'local-file-busy')
 
 if __name__=='__main__':unittest.main()

@@ -5,9 +5,9 @@
 
 ## 第二大脑创建工具（本地测试通过版）
 
-直接下载：[完整试用版 ZIP](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.1.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
+直接下载：[完整试用版 ZIP](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.2.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
 
-本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.1 将 GitHub API 用于身份与版本核验，仅在克隆、推送等必要传输时使用 Git 网络；可核对并接续 0.8.0 留下的本地阶段凭证。真实 Windows 完整创建及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
+本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.2 修复 Windows 临时文件占用导致请求日志中断主流程的问题；所有创建步骤已完成的任务可直接重新检查。真实 Windows 最终报告及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
 
 ## 目录结构
 

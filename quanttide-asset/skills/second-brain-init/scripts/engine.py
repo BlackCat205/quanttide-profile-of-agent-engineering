@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-VERSION = '0.3.1'
+VERSION = '0.4.0'
 verification_observer = threading.local()
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
@@ -175,6 +175,10 @@ class Provider:
     def ensure(self, name, allow_create, title, require_new=False):
         path = self.repo(name)
         info = self.info(name)
+        resume_created = getattr(self, 'created_receipts', {}).get(name)
+        if resume_created:
+            require(info.get('id') == resume_created.get('repository_id') and info.get('owner_id') == resume_created.get('owner_id') and info['exists'], '中断仓库身份已变化，不能接续。')
+            require_new = False
         require(not require_new or not info['exists'], f'新建目标 {name} 已存在；停止，不能自动复用。')
         if not info['exists']:
             require(allow_create, f'仓库 {name} 不存在。')
@@ -186,9 +190,20 @@ class Provider:
                 identity=github_identity(self.organization)
                 endpoint='user/repos' if identity['owner_type']=='User' else 'orgs/'+identity['owner']+'/repos'
                 command(['gh', 'api', '--method', 'POST', endpoint, '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
+            if getattr(self, 'phase', None): self.phase(name, 'remote-created')
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            command(['git', 'clone', self.remote(name), path])
+            # Clone in an isolated attempt directory; never overwrite/delete remnants.
+            import tempfile
+            downloads = path.parent.parent/'downloads'
+            downloads.mkdir(parents=True,exist_ok=True)
+            attempt = Path(tempfile.mkdtemp(prefix=name+'-clone-', dir=downloads))
+            candidate = attempt/'repository'
+            command(['git', 'clone', self.remote(name), candidate])
+            require(not path.exists(), '下载期间目标目录出现，保留下载结果并停止。')
+            candidate.rename(path)
+            attempt.rmdir()
+            if getattr(self, 'phase', None): self.phase(name, 'downloaded')
         require((path / '.git').exists(), f'{path} 不是 Git 仓库。')
         if self.kind == 'github':
             identity=github_identity(self.organization)
@@ -422,6 +437,18 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
     return plan
 
 
+def recovery_snapshot_matches(current, state):
+    expected = state['checkpoint']
+    if current == expected: return True
+    adjusted = json.loads(json.dumps(expected))
+    for name, before in expected.items():
+        phases = [p for p in state.get('phases', []) if p['repo'] == name]
+        if phases and phases[-1]['kind'] == 'committed' and before.get('local') and before.get('status') == '':
+            candidate = dict(before, remote=before['local'])
+            if current.get(name) == candidate: adjusted[name] = candidate
+    return current == adjusted
+
+
 def load_plan(run, readonly=False):
     plan = read_json(Path(run)/'execution-plan.json')
     expected = plan.pop('id')
@@ -465,6 +492,7 @@ class Executor:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
         self.changed.setdefault(repo.name,set()).add(name)
+        if getattr(self.provider, 'phase', None): self.provider.phase(repo.name, 'files-written')
 
     def block(self, repo, path, key, body):
         self.write(repo, path, content_block(text_at(repo,path),key,body))
@@ -558,11 +586,15 @@ class Executor:
                 for path in sorted(paths): safe_path(repo,path)
                 stage_paths=[p for p in sorted(paths) if not any(p.startswith(parent+'/') for parent in paths if parent!=p)]
                 git(repo,'add','--',*stage_paths)
+                if getattr(provider, 'phase', None): provider.phase(repo.name, 'staged')
                 if git(repo,'diff','--cached','--quiet',check=False).returncode:
                     git(repo,'commit','-m','feat(asset): '+self.plan['scenario'])
+                    if getattr(provider, 'phase', None): provider.phase(repo.name, 'committed')
             branch = git(repo,'symbolic-ref','--short','HEAD').stdout.strip()
             require(not git(repo,'status','--porcelain').stdout, '提交后仍有遗漏文件，请保留任务并检查。')
-            git(repo,'push','origin','HEAD:refs/heads/'+branch)
+            if provider.head(repo.name) != git(repo,'rev-parse','HEAD').stdout.strip():
+                git(repo,'push','origin','HEAD:refs/heads/'+branch)
+            if getattr(provider, 'phase', None): provider.phase(repo.name, 'pushed')
         elif kind == 'rename-repo':
             provider.rename(op['repo'],op['new_name'])
         elif kind == 'replace-references':
@@ -709,9 +741,23 @@ def apply(run):
             save(run/'verification-report.json',report)
             require(report['status']=='passed','既有结果已发生漂移，请检查报告。')
             return report
-        require(snapshot(provider,plan['names']) == state['checkpoint'], '计划或上次检查点之后仓库已变化，请先人工检查并重新规划。')
+        require(recovery_snapshot_matches(snapshot(provider,plan['names']), state), '计划或上次检查点之后仓库已变化，请先人工检查并重新规划。')
         executor, started = Executor(plan,state.get("owned_files")), time.monotonic()
         require(not state.get('owned_content') or executor.owned_content()==state['owned_content'], '工作流文件内容已变化，请人工检查，不能自动提交。')
+        executor.provider.created_receipts = state.get('created_receipts', {})
+        def phase(name, stage):
+            observed = snapshot(provider, [name])[name]
+            state['checkpoint'][name] = observed
+            if stage == 'remote-created':
+                state.setdefault('created_receipts', {})[name] = dict(observed)
+                executor.provider.created_receipts = state['created_receipts']
+            state['owned_files'] = {n:sorted(paths) for n,paths in executor.changed.items()}
+            state['owned_content'] = executor.owned_content()
+            event = {'op':state.get('current',{}).get('op'),'repo':name,'kind':stage,'status':'passed','at':now()}
+            state.setdefault('phases', []).append(event)
+            save(state_file,state)
+        executor.provider.phase = phase
+        state['checkpoint'] = snapshot(provider, plan['names'])
         state['status']='running'
         state.pop('error',None)
         save(state_file,state)
@@ -740,6 +786,7 @@ def apply(run):
         except (WorkflowError, OSError, KeyboardInterrupt) as exc:
             state['status']='paused'
             state['error']=str(exc) or '用户中断'
+            state.setdefault('first_error',state['error'])
             if state.get('current'):
                 state['current']['status']='failed';state['events'].append(dict(state['current'],at=now()))
             # Keep the last successful checkpoint; do not bless partial mutations as known-safe.

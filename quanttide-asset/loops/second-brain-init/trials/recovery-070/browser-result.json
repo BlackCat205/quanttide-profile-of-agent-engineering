@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "at": "2026-09-09T02:32:56.587Z",
+  "checks": [
+    "Planning failure hides unrelated LICENSE recovery panel",
+    "Planning failure does not offer execution resume",
+    "Legacy partial run exposes reviewed adoption panel",
+    "Adoption displays stable repository identity",
+    "Adoption requires explicit confirmation",
+    "Unavailable observations are separate from actual defects",
+    "Failure details identify repository",
+    "Requirement row preserves unknown state",
+    "Repair displays proposed license content",
+    "No repair request without explicit confirmation",
+    "Confirmed repair sends exactly one request",
+    "Paused repair screen fits mobile viewport",
+    "No JavaScript errors"
+  ],
+  "errors": [],
+  "platform": "linux",
+  "github": "simulated",
+  "real_windows": false
+}

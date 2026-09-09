@@ -34,7 +34,8 @@ sys.path.insert(0,str(HERE))
 import survey
 from github_login import Login
 import repair
-VERSION='0.6.2'
+import partial_recovery
+VERSION='0.7.0'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -219,7 +220,7 @@ class Studio:
                         current=e.snapshot(e.Provider(plan['workspace'],plan['provider'],plan['organization']),plan['names'])
                         expected=read(folder/'execution-log.json',{}).get('checkpoint',plan['before'])
                         check.update(current=current,changed=[name for name in plan['names'] if current[name]!=expected.get(name)])
-                        e.require(not check['changed'],'仓库状态已变化：'+', '.join(check['changed'])+'；请重新调查并生成方案。')
+                        e.require(e.recovery_snapshot_matches(current,read(folder/'execution-log.json',{'checkpoint':expected})),'仓库状态已变化：'+', '.join(check['changed'])+'；请重新调查并生成方案。')
                         if plan['provider']=='github':
                             adopted=plan['sources']['bylaw'];owner,repo=adopted['repository'].split('/')
                             latest=survey.text_file(owner,repo,adopted['path'])
@@ -318,6 +319,26 @@ class Studio:
             self.spawn(folder,task)
         return {'id':key}
 
+    def partial_task(self,key,payload,execute=False):
+        folder=self.folder(key)
+        with self.guard:
+            e.require(not self.active,'请等待当前操作完成。')
+            e.require(read(folder/'ui.json')['status']=='paused','仅支持暂停任务。')
+            self.set_meta(folder,status='verifying',error=None)
+            def task():
+                if execute:
+                    e.require(payload.get('confirmed') is True,'请确认已核对所列仓库，允许接续初始骨架。')
+                    new_key=secrets.token_hex(8);destination=self.storage/'runs'/new_key
+                    plan=partial_recovery.migrate(folder,destination,payload.get('proposal_id'),payload.get('reviewer',''))
+                    meta=dict(read(folder/'ui.json'));meta.update(id=new_key,status='paused',created_at=e.now(),error='恢复方案已确认，点击检查并继续执行剩余步骤。')
+                    e.save(destination/'ui.json',meta)
+                    self.set_meta(folder,status='paused',error='已生成独立恢复任务，请打开恢复任务继续。')
+                else:
+                    partial_recovery.preview(folder)
+                    self.set_meta(folder,status='paused',error='请核对初始仓库与 README；确认后生成独立恢复任务。')
+            self.spawn(folder,task)
+        return {'id':key}
+
     def diagnostics(self,key):
         folder=self.folder(key)
         e.require(key not in self.active,'请等当前操作结束再导出诊断包。')
@@ -336,10 +357,11 @@ class Studio:
             return value
         report=read(folder/'verification-report.json',{})
         report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
-        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','owned_files')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
+        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','first_error','owned_files','phases','created_receipts')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
         observation=read(folder/'survey.json',{})
         records['diagnosis.json']['survey']={k:observation.get(k) for k in ('started_at','finished_at','access')}
         records['diagnosis.json']['survey']['rules']=survey.rules_diagnostic(observation.get('rules',{}))
+        records['diagnosis.json']['partial_migration']=read(folder/'partial-migration.json')
         records['diagnosis.json']['pre_execution_rules']=read(folder/'pre-execution-check.json',{}).get('rules')
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
@@ -365,7 +387,7 @@ class Studio:
 
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
-        result=dict(meta,completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and plan.get('engine_sha256')==hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        result=dict(meta,first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and plan.get('engine_sha256')!=hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest() and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and plan.get('engine_sha256')==hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))
@@ -385,6 +407,8 @@ class Studio:
                 row['action']='拟更新已有总入口' if before.get('remote_exists') and row['name']==root_name else '冲突：新建禁止复用' if before.get('remote_exists') else '拟新建本地仓库' if plan['provider']=='local' else '未发现可见仓库；仅尝试新建，重名时停止'
                 row['writes']=[op['kind'] for op in plan['operations'] if op['repo']==row['name']]
         result['verification_progress']=read(folder/'verification-progress.json')
+        result['partial_proposal']=read(folder/'partial-proposal.json')
+        result['partial_migration']=read(folder/'partial-migration.json')
         result['repair']=read(folder/'repair-plan.json')
         result['repair_record']=read(folder/'repair-record.json')
         if result['repair_record']:
@@ -469,10 +493,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/github/cancel':return self.send(200,studio.login.cancel())
             if path=='/api/plan':return self.send(200,studio.create(payload))
             if path=='/api/survey':return self.send(200,studio.start_survey(payload))
-            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply)',path)
+            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')
             elif action=='verify':data=studio.verify(key)
+            elif action in ('partial-preview','partial-apply'):data=studio.partial_task(key,payload,action=='partial-apply')
             elif action in ('repair-preview','repair-apply'):data=studio.repair_task(key,payload,action=='repair-apply')
             elif action=='acceptance':data=studio.acceptance(key,payload)
             else:data=studio.document(key,payload.get('name',''))

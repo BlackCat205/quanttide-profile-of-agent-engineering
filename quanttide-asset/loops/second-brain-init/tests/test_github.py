@@ -137,6 +137,13 @@ class GithubWorkflowTests(unittest.TestCase):
                     self.assertTrue(any(x['status']=='running' for x in view['events']))
                     self.assertTrue(all(x['commit'] for x in view['report']['repositories']))
                     self.assertIn('https://github.com/BlackCat205/second-brain-test',studio.export(key))
+                    if mode=='new':
+                        count=len(transport.mutations)
+                        studio.connection_task(key);view=self.wait(studio,key)
+                        self.assertEqual(view['status'],'completed')
+                        self.assertEqual([x['status'] for x in view['connection_check']['checks']],
+                                         ['passed','passed','passed'])
+                        self.assertEqual(len(transport.mutations),count)
                 self.assertEqual(transport.mutations.count('second-brain-test'),1)
                 self.assertEqual(len(transport.mutations),15)
                 root=Path(view['plan']['workspace'])/'repositories/second-brain-test'

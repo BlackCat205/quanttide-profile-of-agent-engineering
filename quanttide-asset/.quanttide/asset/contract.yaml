@@ -61,7 +61,7 @@ assets:
       path: loops/second-brain-init/trials
 skills:
   second-brain-init:
-    version: 0.4.0
+    version: 0.4.1
     entrypoint: skills/second-brain-init/scripts/engine.py
     params:
       default_mode: plan

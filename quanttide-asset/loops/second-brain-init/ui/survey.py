@@ -3,6 +3,8 @@ import base64
 from datetime import datetime, timezone
 import json
 import time
+import threading
+observer=threading.local()
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -26,7 +28,13 @@ def _get_once(path):
 def get(path):
     # Retry only transient read failures; never bypass unknown/changed rule gates.
     for attempt in range(3):
+        callback=getattr(observer,'callback',None)
+        parts=path.split('/')
+        event={'tool':'github-public-api','operation':'GET','target':'/'.join(parts[1:3]) if parts[0]=='repos' else None,'stage':'survey','attempt':attempt+1,'started_at':now(),'status':'running'}
+        if callback:callback(dict(event))
         result = _get_once(path)
+        event.update(status='passed' if result['status']=='ok' else 'unknown',finished_at=now(),http_status=result.get('http_status'),reason=result.get('reason'))
+        if callback:callback(event)
         if result['status'] == 'ok' or result.get('http_status') not in (None, 500, 502, 503, 504):
             return result
         if attempt < 2:

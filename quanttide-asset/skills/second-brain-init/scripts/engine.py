@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 
 import yaml
 
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 verification_observer = threading.local()
+request_observer = threading.local()
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
@@ -90,33 +91,61 @@ def safe_path(base, relative):
     require(target.resolve().is_relative_to(Path(base).resolve()), '路径超出工作区。')
     return target
 
+def command_kind(argv):
+    args=list(map(str,argv));i=1
+    while i<len(args) and args[i].startswith('-'):
+        i+=2 if args[i] in ('-c','-C','--git-dir','--work-tree') else 1
+    return args[i] if i<len(args) else ''
+
 def command(argv, cwd=None, check=True):
+    args=list(map(str,argv));kind=command_kind(args)
+    target=next((m.group(1).removesuffix('.git') for arg in args if (m:=re.fullmatch(r'https://github.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:/)?',arg))),None)
+    if args[0]=='gh':
+        endpoint=next((arg for arg in args if re.fullmatch(r'repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?',arg)),None)
+        target='/'.join(endpoint.split('/')[1:3]) if endpoint else None
+    target=target or getattr(request_observer,'target',None)
     env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GCM_INTERACTIVE='Never', GH_HOST='github.com', GH_PROMPT_DISABLED='1')
-    if str(argv[0])=='git':
-        # Process-scoped: Git and REST use the same gh credentials, without changing global Git config.
-        count=int(env.get('GIT_CONFIG_COUNT','0'))
+    count=int(env.get('GIT_CONFIG_COUNT','0'))
+    if args[0]=='git':
         for key,value in [('credential.https://github.com.helper',''),('credential.https://github.com.helper','!gh auth git-credential')]:
             env['GIT_CONFIG_KEY_'+str(count)]=key;env['GIT_CONFIG_VALUE_'+str(count)]=value;count+=1
         env['GIT_CONFIG_COUNT']=str(count)
-    readonly = list(map(str,argv[:2])) == ['git','ls-remote']
-    attempts = 3 if readonly else 1
+    gh_readonly=(args[0]=='gh' and kind=='api' and not any(
+        value.upper() in ('POST','PUT','PATCH','DELETE')
+        for flag,value in zip(args,args[1:]) if flag in ('--method','-X')))
+    readonly=(args[0]=='git' and kind=='ls-remote') or gh_readonly
+    attempts=3 if readonly else 1
+    network=(args[0]=='gh' or kind in ('ls-remote','clone','fetch','push','submodule'))
+    callback=getattr(request_observer,'callback',None)
     for attempt in range(attempts):
+        compatibility=args[0]=='git' and bool(target) and (getattr(request_observer,'http1',False) or (readonly and attempt>0))
+        run_env=dict(env)
+        if compatibility:
+            run_env['GIT_CONFIG_KEY_'+str(count)]='http.https://github.com/.version'
+            run_env['GIT_CONFIG_VALUE_'+str(count)]='HTTP/1.1';run_env['GIT_CONFIG_COUNT']=str(count+1)
+        event={'target':target,'operation':kind,'tool':args[0],'stage':getattr(request_observer,'stage',None),'attempt':attempt+1,'started_at':now(),'status':'running','protocol':'HTTP/1.1' if compatibility else 'default'}
+        started=time.monotonic()
+        if network and callback:callback(dict(event))
         try:
-            result = subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=25 if readonly else 120)
+            result=subprocess.run(args,cwd=cwd,env=run_env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25 if readonly else 120)
         except FileNotFoundError:
-            raise WorkflowError(f'找不到 {argv[0]}，请按使用说明安装。') from None
+            event.update(status='failed',category='missing-tool',finished_at=now())
+            if network and callback:callback(event)
+            raise WorkflowError(f'找不到 {args[0]}，请按使用说明安装。') from None
         except subprocess.TimeoutExpired:
-            if readonly and attempt+1 < attempts: continue
-            raise (RemoteReadError if readonly else WorkflowError)(f'{argv[0]} 超时；读取未完成，请检查连接。' if readonly else f'{argv[0]} 超时；写入结果待核对，不会自动重试。') from None
-        if not result.returncode: break
-        transient = any(x in result.stderr.lower() for x in ('could not resolve','failed to connect','connection was reset','connection reset','timed out','recv failure','http/2','remote end hung up','502','503','504'))
-        if not (readonly and transient and attempt+1 < attempts): break
+            result=subprocess.CompletedProcess(args,124,'','timed out')
+        transient=any(x in result.stderr.lower() for x in ('could not resolve','failed to connect','connection was reset','connection reset','timed out','recv failure','http/2','remote end hung up','502','503','504'))
+        category='connection' if transient else 'authorization' if any(x in result.stderr.lower() for x in ('authentication','permission denied','403','401')) else 'git-or-service'
+        event.update(status='passed' if result.returncode==0 else 'failed',category=None if result.returncode==0 else category,exit_code=result.returncode,finished_at=now(),elapsed_seconds=round(time.monotonic()-started,3))
+        if network and callback:callback(event)
+        if not result.returncode:
+            if compatibility:request_observer.http1=True
+            break
+        if not(readonly and transient and attempt+1<attempts):break
         time.sleep(.3*(attempt+1))
     if check and result.returncode:
-        # Classify without persisting raw stderr, which may contain credentials.
-        reason = '连接中断或超时' if transient else '认证或权限受限' if any(x in result.stderr.lower() for x in ('authentication','permission denied','403','401')) else '读取或 Git 状态异常'
-        raise (RemoteReadError if readonly else WorkflowError)(f'{argv[0]} {argv[1] if len(argv)>1 else ""} 失败（退出码 {result.returncode}）：{reason}。'+(f'本次最多尝试 {attempts} 次；暂时无法核验远端。' if readonly else '请先核对实际结果，不会自动重复写入。'))
-
+        reason={'connection':'连接中断或超时','authorization':'认证或权限受限','git-or-service':'读取或 Git 状态异常'}[category]
+        raise (RemoteReadError if readonly else WorkflowError)(f'{target or "当前目标"} · {args[0]} {kind} 失败（退出码 {result.returncode}）：{reason}。本次已尝试 {attempt+1} 次。'+('暂时无法核验远端。' if readonly else '结果待核对，不会自动重复写入。'))
     return result
 
 def git(path, *args, check=True):
@@ -189,7 +218,10 @@ class Provider:
             else:
                 identity=github_identity(self.organization)
                 endpoint='user/repos' if identity['owner_type']=='User' else 'orgs/'+identity['owner']+'/repos'
-                command(['gh', 'api', '--method', 'POST', endpoint, '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
+                response=command(['gh', 'api', '--method', 'POST', endpoint, '-f', 'name='+name, '-F', 'private=false', '-F', 'auto_init=true'])
+                data=json.loads(response.stdout)
+                if getattr(self,'phase',None):
+                    self.phase(name,'creation-response',{'repository_id':data.get('id'),'owner_id':data.get('owner',{}).get('id'),'full_name':data.get('full_name')})
             if getattr(self, 'phase', None): self.phase(name, 'remote-created')
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,6 +250,7 @@ class Provider:
             git(path, 'add', '--', 'README.md')
             git(path, 'commit', '-m', 'feat(asset): 初始化仓库')
             git(path, 'push', '-u', 'origin', 'HEAD:main')
+            if getattr(self,'phase',None):self.phase(name,'initialized')
 
     def rename(self, old, new):
         old_path, new_path = self.repo(old), self.repo(new)
@@ -230,13 +263,16 @@ class Provider:
         git(new_path, 'remote', 'set-url', 'origin', self.remote(new))
 
 
-def snapshot(provider, names, strict=False):
+def snapshot(provider, names, strict=False, baseline=None):
     result = {}
     for name in sorted(set(names)):
         path = provider.repo(name)
-        info=provider.info(name)
-        item = {'remote': provider.head(name,info), 'remote_exists': info['exists'], 'local': None, 'status': None, 'rules': {}}
-        if provider.kind=='github':item['repository_id']=info.get('id');item['owner_id']=info.get('owner_id')
+        if baseline is not None:
+            item=json.loads(json.dumps(baseline[name]))
+        else:
+            info=provider.info(name)
+            item = {'remote': provider.head(name,info), 'remote_exists': info['exists'], 'local': None, 'status': None, 'rules': {}}
+            if provider.kind=='github':item['repository_id']=info.get('id');item['owner_id']=info.get('owner_id')
         if path.exists():
             require((path/'.git').exists(), f'已有目录不是仓库：{name}')
             item['local'] = git(path, 'rev-parse', 'HEAD', check=False).stdout.strip()
@@ -448,6 +484,51 @@ def recovery_snapshot_matches(current, state):
             if current.get(name) == candidate: adjusted[name] = candidate
     return current == adjusted
 
+def operation_names(plan, op):
+    """Repositories whose state can affect this one operation."""
+    return sorted({op.get(key) for key in ('repo', 'child', 'new_name')
+                   if op.get(key) in plan['names']})
+
+def next_operation(plan, state):
+    return next((op for op in plan['operations'] if op['id'] not in state.get('completed', [])), None)
+
+def preflight_names(plan,state):
+    # A newly approved plan gets one complete drift check before any write.
+    # Resumes check only the next operation here; every later operation checks
+    # its own dependencies immediately before touching them.
+    if not state.get('completed') and not state.get('events') and not state.get('pending_phase'):
+        return plan['names']
+    upcoming=next_operation(plan,state)
+    return operation_names(plan,upcoming) if upcoming else plan['names']
+
+def reconcile_creation_response(provider, plan, state):
+    """Turn a durable GitHub create response into a resumable checkpoint.
+
+    This is intentionally narrow: without the exact repository and owner IDs
+    returned by the create call, an unexpected same-name repository is never
+    adopted automatically.
+    """
+    pending=state.get('pending_phase') or {}
+    name=pending.get('repo')
+    saved=(state.get('creation_responses') or {}).get(name,{}).get('receipt') or {}
+    if pending.get('stage') not in ('creation-response','remote-created') or not name or not saved:
+        return False
+    require(saved.get('full_name','').lower()==(plan['organization']+'/'+name).lower(),
+            '创建响应中的仓库名称与计划不一致。')
+    observed=snapshot(provider,[name])[name]
+    require(observed.get('remote_exists') and observed.get('repository_id')==saved.get('repository_id')
+            and observed.get('owner_id')==saved.get('owner_id'),
+            '已创建仓库的身份无法与创建响应对应，不能自动接续。')
+    require(observed.get('remote') and observed.get('local') is None,
+            '已创建仓库的本地或远端状态超出自动接续范围。')
+    state['checkpoint'][name]=observed
+    state.setdefault('created_receipts',{})[name]=dict(observed)
+    state.setdefault('phases',[]).append({'op':pending.get('op'),'repo':name,
+                                          'kind':'remote-created','status':'passed',
+                                          'at':now(),'recovered_from':'creation-response'})
+    state.pop('pending_phase',None)
+    return True
+
 
 def load_plan(run, readonly=False):
     plan = read_json(Path(run)/'execution-plan.json')
@@ -532,6 +613,7 @@ class Executor:
                 require(not location.exists(), f'{path} 已存在，需人工处理。')
                 git(repo,'-c','protocol.file.allow=always' if provider.kind=='local' else 'protocol.file.allow=never','submodule','add',url,path)
                 self.changed.setdefault(repo.name,set()).update(['.gitmodules',path])
+            if getattr(provider,'phase',None):provider.phase(repo.name,'files-written')
         elif kind == 'domain-docs':
             d = op['domain']
             base = text_at(repo,'README.md') or '# '+d['chinese_name']+'\n'
@@ -613,6 +695,7 @@ class Executor:
             git(repo,'submodule','sync','--recursive')
         elif kind == 'refresh-mounts':
             for path, value in modules(repo).items(): self.refresh(repo,path,value['url'])
+            if getattr(provider,'phase',None):provider.phase(repo.name,'files-written')
         elif kind == 'release-notes':
             text = text_at(repo,'CHANGELOG.md')
             require('## [Unreleased]' in text, '发布要求存在 Unreleased 章节。')
@@ -721,7 +804,7 @@ def execution_locks(run, workspace):
             path.unlink()
 
 
-def apply(run):
+def apply(run,prechecked=None):
     run = Path(run)
     plan = load_plan(run)
     require((run/'approval-record.json').is_file(), '尚未确认，未执行任何操作。请先审阅并运行 approve。')
@@ -732,7 +815,10 @@ def apply(run):
     with execution_locks(run,plan['workspace']):
         state_file = run/'execution-log.json'
         provider = Provider(plan['workspace'],plan['provider'],plan['organization'])
-        state = read_json(state_file) if state_file.exists() else {'plan_id':plan['id'],'completed':[], 'checkpoint':plan['before'],'events':[]}
+        state = read_json(state_file) if state_file.exists() else {
+            'plan_id':plan['id'],'completed':[],
+            # Phase checkpoints must never mutate the immutable approved plan.
+            'checkpoint':json.loads(json.dumps(plan['before'])),'events':[]}
         require(state['plan_id']==plan['id'], '执行日志不对应此计划。')
         state['approval_kind']='simulated' if approval.get('simulated') else 'human-recorded'
         state['provider']=plan['provider']
@@ -741,12 +827,42 @@ def apply(run):
             save(run/'verification-report.json',report)
             require(report['status']=='passed','既有结果已发生漂移，请检查报告。')
             return report
-        require(recovery_snapshot_matches(snapshot(provider,plan['names']), state), '计划或上次检查点之后仓库已变化，请先人工检查并重新规划。')
+        if reconcile_creation_response(provider,plan,state):
+            save(state_file,state)
+        initial_names = preflight_names(plan,state)
+        if prechecked is None:
+            current=snapshot(provider,initial_names)
+        else:
+            require(set(prechecked)==set(initial_names),'执行前检查范围与下一步不一致。')
+            current=json.loads(json.dumps(prechecked))
+        require(recovery_snapshot_matches(current, {'checkpoint': {name:state['checkpoint'][name] for name in initial_names},
+                                                     'phases': state.get('phases', [])}),
+                '下一步涉及的仓库在计划或上次检查点之后已变化，请人工检查。')
+        if any(current[name]!=state['checkpoint'][name] for name in initial_names):
+            state['checkpoint'].update(current)
+            pending=state.get('pending_phase') or {}
+            if pending.get('repo') in initial_names and pending.get('stage')=='pushed':
+                state.setdefault('phases',[]).append({'op':pending.get('op'),'repo':pending['repo'],
+                                                      'kind':'pushed','status':'passed','at':now(),
+                                                      'recovered_from':'remote-observation'})
+                state.pop('pending_phase',None)
+            save(state_file,state)
         executor, started = Executor(plan,state.get("owned_files")), time.monotonic()
         require(not state.get('owned_content') or executor.owned_content()==state['owned_content'], '工作流文件内容已变化，请人工检查，不能自动提交。')
         executor.provider.created_receipts = state.get('created_receipts', {})
-        def phase(name, stage):
-            observed = snapshot(provider, [name])[name]
+        def phase(name, stage, receipt=None):
+            if stage=='creation-response':
+                state['pending_phase']={'op':state.get('current',{}).get('op'),'repo':name,'stage':stage,
+                                        'at':now(),'status':'executed-unverified','receipt':receipt}
+                state.setdefault('creation_responses',{})[name]=state['pending_phase']
+                save(state_file,state)
+                return
+            state['owned_files']={n:sorted(paths) for n,paths in executor.changed.items()}
+            state['owned_content']=executor.owned_content()
+            state['pending_phase']={'op':state.get('current',{}).get('op'),'repo':name,'stage':stage,
+                                    'at':now(),'status':'executed-unverified','receipt':receipt}
+            save(state_file,state)
+            observed = snapshot(provider, [name], baseline=state['checkpoint'] if stage in ('downloaded','files-written','staged','committed') else None)[name]
             state['checkpoint'][name] = observed
             if stage == 'remote-created':
                 state.setdefault('created_receipts', {})[name] = dict(observed)
@@ -755,26 +871,36 @@ def apply(run):
             state['owned_content'] = executor.owned_content()
             event = {'op':state.get('current',{}).get('op'),'repo':name,'kind':stage,'status':'passed','at':now()}
             state.setdefault('phases', []).append(event)
+            state.pop('pending_phase',None)
             save(state_file,state)
         executor.provider.phase = phase
-        state['checkpoint'] = snapshot(provider, plan['names'])
         state['status']='running'
         state.pop('error',None)
         save(state_file,state)
         try:
             for op in plan['operations']:
                 if op['id'] in state['completed']: continue
-                check_identity(plan)
+                request_observer.stage=op['kind']
+                request_observer.target=plan['organization']+'/'+op['repo']
+                state['intent']={'op':op['id'],'repo':op['repo'],'kind':op['kind'],'at':now()}
+                save(state_file,state)
                 state['current']={'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'running'}
                 state['events'].append(dict(state['current']));save(state_file,state)
-                require(snapshot(provider,plan['names']) == state['checkpoint'], '执行过程中仓库已变化；停止并保留已完成记录，请重新调查。')
+                affected=operation_names(plan, op)
+                observed=snapshot(provider,affected)
+                require(all(observed[n]==state['checkpoint'][n] for n in affected),
+                        '执行过程中仓库已变化（仅核对当前相关仓库）；停止并保留已完成记录，请重新调查。')
                 require(not state.get('owned_content') or executor.owned_content()==state['owned_content'], '工作流文件内容已变化，请人工检查，不能自动提交。')
                 executor.execute(op)
                 state['completed'].append(op['id'])
                 state['events'].append({'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed'})
                 state['owned_content']=executor.owned_content()
                 state['owned_files']={name:sorted(paths) for name,paths in executor.changed.items()}
-                state['checkpoint']=snapshot(provider,plan['names'])
+                # Local/file phases already update their checkpoint without a
+                # network call. Rename is the only operation here that changes
+                # repository identity and therefore needs a fresh observation.
+                if op['kind']=='rename-repo':
+                    state['checkpoint'].update(snapshot(provider,affected))
                 state['current']['status']='passed'
                 save(state_file,state)
             state['current']={'kind':'verify','repo':'全部目标仓库','at':now(),'status':'running'};save(state_file,state)

@@ -10,6 +10,40 @@ import partial_recovery
 class PartialTests(unittest.TestCase):
     setUp=test_recovery.RecoveryTests.setUp
 
+    def test_completed_phase_survives_remote_verification_failure(self):
+        approved=(self.run/'execution-plan.json').read_bytes()
+        original=e.snapshot
+        def fail(provider,names,*args,**kwargs):
+            if kwargs.get('baseline') is None and provider.info('quanttide')['exists']:
+                raise e.RemoteReadError('injected verification outage')
+            return original(provider,names,*args,**kwargs)
+        with patch.object(e,'snapshot',side_effect=fail):
+            with self.assertRaisesRegex(e.WorkflowError,'verification outage'):e.apply(self.run)
+        log=e.read_json(self.run/'execution-log.json')
+        self.assertEqual(log['pending_phase']['stage'],'remote-created')
+        self.assertEqual(log['pending_phase']['status'],'executed-unverified')
+        self.assertEqual(log['completed'],[])
+        self.assertEqual(log['intent']['kind'],'ensure-repo')
+        self.assertEqual((self.run/'execution-plan.json').read_bytes(),approved)
+
+    def test_creation_response_reconciles_only_exact_repository_identity(self):
+        from unittest.mock import Mock
+        plan={'organization':'Example','names':['test']}
+        pending={'op':'001','repo':'test','stage':'remote-created'}
+        receipt={'repository_id':12,'owner_id':34,'full_name':'Example/test'}
+        state={'checkpoint':{'test':{}},'pending_phase':pending,
+               'creation_responses':{'test':{'receipt':receipt}}}
+        observed={'remote_exists':True,'remote':'abc','local':None,
+                  'repository_id':12,'owner_id':34}
+        with patch.object(e,'snapshot',return_value={'test':observed}):
+            self.assertTrue(e.reconcile_creation_response(Mock(),plan,state))
+        self.assertEqual(state['created_receipts']['test'],observed)
+        self.assertNotIn('pending_phase',state)
+        changed={'checkpoint':{'test':{}},'pending_phase':pending,
+                 'creation_responses':{'test':{'receipt':receipt}}}
+        with patch.object(e,'snapshot',return_value={'test':dict(observed,repository_id=99)}):
+            with self.assertRaisesRegex(e.WorkflowError,'身份无法'):e.reconcile_creation_response(Mock(),plan,changed)
+
     def test_clone_disconnect_preserves_receipt_and_resumes(self):
         original=e.command
         def fail(args,*a,**kw):
@@ -53,12 +87,19 @@ class PartialTests(unittest.TestCase):
 
     def test_migration_preserves_source_and_binds_new_approval(self):
         import hashlib
-        before=self.plan['before'];log={'plan_id':self.plan['id'],'completed':[],'checkpoint':before,'events':[]}
+        from unittest.mock import Mock
+        plan=copy.deepcopy(self.plan);plan.pop('id');plan.update(provider='github',organization='Example',
+            github_identity={'owner_id':1},engine_sha256=partial_recovery.LEGACY_ENGINE)
+        plan['id']=e.digest(plan);self.plan=plan;e.save(self.run/'execution-plan.json',plan)
+        before=plan['before'];log={'plan_id':plan['id'],'completed':[],'checkpoint':before,'events':[]}
         e.save(self.run/'execution-log.json',log)
-        original=(self.run/'execution-plan.json').read_bytes()
-        proposal={'source_plan':self.plan['id'],'repo':'quanttide','operation':'001','organization':'Example','repository_id':123,'commit':'abc','content':'# quanttide','before':before,'checked_at':e.now(),'engine_sha256':hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()}
+        e.save(self.run/'approval-record.json',{'plan_id':plan['id'],'accepted':True,'simulated':False})
+        proposal={'source_plan':plan['id'],'repo':'quanttide','operation':'001','organization':'Example','repository_id':123,'commit':'abc','content':'# quanttide','before':before,'checked_at':e.now(),'engine_sha256':hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()}
         proposal['id']=e.digest(proposal);e.save(self.run/'partial-proposal.json',proposal)
-        with patch.object(partial_recovery,'inspect',return_value=(self.plan,log,proposal)):
+        provider=Mock();provider.info.return_value={'id':123,'owner_id':1,'can_push':True,'archived':False}
+        provider.head.return_value='abc';provider.repo.return_value=self.repo.parent/'absent'
+        original=(self.run/'execution-plan.json').read_bytes()
+        with patch.object(e,'check_identity'),patch.object(e,'Provider',return_value=provider):
             dest=self.run.parent/'recovered'
             result=partial_recovery.migrate(self.run,dest,proposal['id'],'reviewer')
             self.assertNotEqual(result['id'],self.plan['id'])
@@ -68,18 +109,20 @@ class PartialTests(unittest.TestCase):
 
     def test_legacy_inspection_rejects_extra_remote_commit(self):
         from unittest.mock import Mock
-        seed=e.Provider(self.work);seed.ensure('seed',True,'quanttide')
-        remote=seed.remote('seed');head=seed.head('seed')
+        import base64,json,subprocess
         plan=copy.deepcopy(self.plan);plan.update(provider='github',engine_sha256=partial_recovery.LEGACY_ENGINE,github_identity={'owner_id':1})
         log={'plan_id':plan['id'],'completed':[],'checkpoint':plan['before'],'current':{'op':'001'}}
         e.save(self.run/'execution-log.json',log)
         e.save(self.run/'approval-record.json',{'plan_id':plan['id'],'accepted':True,'simulated':False})
-        current={'quanttide':dict(plan['before']['quanttide'],remote=head,remote_exists=True,repository_id=2,owner_id=1)}
-        provider=Mock();provider.repo.return_value=self.repo;provider.remote.return_value=remote;provider.info.return_value={'can_push':True,'owner_id':1,'id':2}
-        with patch.object(e,'load_plan',return_value=plan),patch.object(e,'check_identity'),patch.object(e,'Provider',return_value=provider),patch.object(e,'snapshot',return_value=current):
-            self.assertEqual(partial_recovery.inspect(self.run)[2]['commit'],head)
-            repo=seed.repo('seed');(repo/'extra.txt').write_text('external change');e.git(repo,'add','extra.txt');e.git(repo,'commit','-m','external');e.git(repo,'push','origin','HEAD:main')
-            current['quanttide']['remote']=e.git(repo,'rev-parse','HEAD').stdout.strip()
+        current={'quanttide':dict(plan['before']['quanttide'],remote='commit',remote_exists=True,repository_id=2,owner_id=1)}
+        provider=Mock();provider.repo.return_value=self.repo;provider.info.return_value={'can_push':True,'owner_id':1,'id':2};provider.head.return_value='commit'
+        responses=[{'sha':'commit','parents':[],'tree':{'sha':'tree'}},{'tree':[{'path':'README.md','mode':'100644','type':'blob','sha':'blob'}]},{'sha':'blob','encoding':'base64','content':base64.b64encode(b'# quanttide').decode()}]
+        def response(args):
+            self.assertEqual(args[:2],['gh','api'])
+            return subprocess.CompletedProcess(args,0,json.dumps(responses.pop(0)),'')
+        with patch.object(e,'load_plan',return_value=plan),patch.object(e,'check_identity'),patch.object(e,'Provider',return_value=provider),patch.object(e,'snapshot',return_value=current),patch.object(e,'command',side_effect=response):
+            self.assertEqual(partial_recovery.inspect(self.run)[2]['commit'],'commit')
+            responses.append({'sha':'commit','parents':[{'sha':'previous'}]})
             with self.assertRaisesRegex(e.WorkflowError,'后续提交'):partial_recovery.inspect(self.run)
 
     def test_files_changed_after_commit_block_resume(self):

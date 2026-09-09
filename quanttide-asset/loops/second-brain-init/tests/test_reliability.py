@@ -70,15 +70,15 @@ class SurveyTests(unittest.TestCase):
             plan=ui.e.make_plan(config,work,run)
             ui.e.approve(run,'automated',plan['id'],simulated=True)
             original=ui.e.snapshot;injected=[]
-            def snapshot(provider,names,strict=False):
-                observed=original(provider,names,strict)
+            def snapshot(provider,names,strict=False,baseline=None):
+                observed=original(provider,names,strict,baseline)
                 path=provider.repo(plan['operations'][0]['repo'])
                 if not injected and (path/'.git').exists():
                     (path/'external-change.txt').write_text('another writer changed this repository')
                     injected.append(True)
                 return observed
             with patch.object(ui.e,'snapshot',side_effect=snapshot):
-                with self.assertRaisesRegex(ui.e.WorkflowError,'执行过程中仓库已变化'):ui.e.apply(run)
+                with self.assertRaisesRegex(ui.e.WorkflowError,'执行过程中仓库已变化|未归属到工作流'):ui.e.apply(run)
             log=ui.e.read_json(run/'execution-log.json')
             self.assertEqual(log['status'],'paused');self.assertEqual(len(log['completed']),1)
 

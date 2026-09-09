@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.7.0'
+VERSION='0.8.0'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -140,6 +140,13 @@ class Studio:
             self.active.add(key)
         def worker():
             try:
+                def request_event(event):
+                    events=read(folder/'requests.json',[])
+                    events.append(event);e.save(folder/'requests.json',events[-2000:])
+                e.request_observer.callback=request_event
+                survey.observer.callback=request_event
+                e.request_observer.stage='preflight'
+                e.request_observer.http1=False
                 e.verification_observer.callback=lambda progress:e.save(folder/'verification-progress.json',progress)
                 fn()
             except Exception as exc:self.set_meta(folder,status='paused',error=cleaned_error(exc))
@@ -217,10 +224,19 @@ class Studio:
                     check={'started_at':e.now(),'plan_id':plan['id'],'provider':plan['provider'],'scope':plan['names'],'status':'checking'}
                     try:
                         e.check_identity(plan)
-                        current=e.snapshot(e.Provider(plan['workspace'],plan['provider'],plan['organization']),plan['names'])
-                        expected=read(folder/'execution-log.json',{}).get('checkpoint',plan['before'])
-                        check.update(current=current,changed=[name for name in plan['names'] if current[name]!=expected.get(name)])
-                        e.require(e.recovery_snapshot_matches(current,read(folder/'execution-log.json',{'checkpoint':expected})),'仓库状态已变化：'+', '.join(check['changed'])+'；请重新调查并生成方案。')
+                        log=read(folder/'execution-log.json',{})
+                        expected=log.get('checkpoint',plan['before'])
+                        provider=e.Provider(plan['workspace'],plan['provider'],plan['organization'])
+                        if e.reconcile_creation_response(provider,plan,log):
+                            e.save(folder/'execution-log.json',log)
+                            expected=log['checkpoint']
+                        names=e.preflight_names(plan,log)
+                        current=e.snapshot(provider,names)
+                        check.update(current=current,scope=names,
+                                     changed=[name for name in names if current[name]!=expected.get(name)])
+                        e.require(e.recovery_snapshot_matches(current,{'checkpoint':{name:expected[name] for name in names},
+                                                                       'phases':log.get('phases',[])}),
+                                  '下一步涉及的仓库状态已变化：'+', '.join(check['changed'])+'；请人工检查。')
                         if plan['provider']=='github':
                             adopted=plan['sources']['bylaw'];owner,repo=adopted['repository'].split('/')
                             latest=survey.text_file(owner,repo,adopted['path'])
@@ -233,7 +249,7 @@ class Studio:
                         check.update(status='blocked',reason=cleaned_error(exc));raise
                     finally:
                         check['finished_at']=e.now();e.save(folder/'pre-execution-check.json',check)
-                    e.apply(folder)
+                    e.apply(folder,prechecked=current)
                 except e.WorkflowError:
                     if (folder/'verification-report.json').is_file():self.build_report(folder)
                     raise
@@ -319,6 +335,39 @@ class Studio:
             self.spawn(folder,task)
         return {'id':key}
 
+    def connection_task(self,key):
+        folder=self.folder(key)
+        with self.guard:
+            e.require(not self.active,'请等待当前操作完成。')
+            plan=e.load_plan(folder,readonly=True)
+            e.require(plan['provider']=='github','仅 GitHub 任务需要连接检测。')
+            previous=read(folder/'ui.json')['status']
+            self.set_meta(folder,status='verifying',error=None)
+            def task():
+                import tempfile
+                provider=e.Provider(plan['workspace'],'github',plan['organization'])
+                candidate=read(folder/'execution-log.json',{}).get('current',{}).get('repo')
+                name=candidate if candidate in plan['names'] else plan['config']['root_repo']
+                result={'started_at':e.now(),'target':plan['organization']+'/'+name,'checks':[],'scope':'只读检测；下载使用临时目录，不更改目标仓库。'}
+                e.request_observer.target=result['target']
+                for label,fn in [('账号接口',lambda:e.check_identity(plan)),('远端版本',lambda:provider.head(name)),('下载连接',None)]:
+                    e.request_observer.stage='connection-check:'+label
+                    row={'label':label,'started_at':e.now()}
+                    try:
+                        if fn:
+                            value=fn()
+                            if label=='远端版本':e.require(value,'未取得远端提交；无法证明目标可下载。')
+                        else:
+                            with tempfile.TemporaryDirectory(prefix='brain-connection-') as temp:
+                                e.command(['git','clone','--depth','1',provider.remote(name),Path(temp)/'repository'])
+                        row['status']='passed'
+                    except Exception as exc:row.update(status='unknown',reason=cleaned_error(exc))
+                    row['finished_at']=e.now();result['checks'].append(row);e.save(folder/'connection-check.json',result)
+                result['finished_at']=e.now();e.save(folder/'connection-check.json',result)
+                self.set_meta(folder,status=previous,error='连接检测完成，请查看三项结果；本次没有执行创建或推送。')
+            self.spawn(folder,task)
+        return {'id':key}
+
     def partial_task(self,key,payload,execute=False):
         folder=self.folder(key)
         with self.guard:
@@ -357,10 +406,12 @@ class Studio:
             return value
         report=read(folder/'verification-report.json',{})
         report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
-        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','first_error','owned_files','phases','created_receipts')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
+        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','first_error','owned_files','phases','created_receipts','intent','pending_phase','creation_responses')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
         observation=read(folder/'survey.json',{})
         records['diagnosis.json']['survey']={k:observation.get(k) for k in ('started_at','finished_at','access')}
         records['diagnosis.json']['survey']['rules']=survey.rules_diagnostic(observation.get('rules',{}))
+        records['diagnosis.json']['requests']=read(folder/'requests.json',[])
+        records['diagnosis.json']['connection_check']=read(folder/'connection-check.json')
         records['diagnosis.json']['partial_migration']=read(folder/'partial-migration.json')
         records['diagnosis.json']['pre_execution_rules']=read(folder/'pre-execution-check.json',{}).get('rules')
         out=io.BytesIO()
@@ -407,6 +458,9 @@ class Studio:
                 row['action']='拟更新已有总入口' if before.get('remote_exists') and row['name']==root_name else '冲突：新建禁止复用' if before.get('remote_exists') else '拟新建本地仓库' if plan['provider']=='local' else '未发现可见仓库；仅尝试新建，重名时停止'
                 row['writes']=[op['kind'] for op in plan['operations'] if op['repo']==row['name']]
         result['verification_progress']=read(folder/'verification-progress.json')
+        result['pending_phase']=log.get('pending_phase')
+        result['connection_check']=read(folder/'connection-check.json')
+        result['last_request']=next(iter(reversed(read(folder/'requests.json',[]))),None)
         result['partial_proposal']=read(folder/'partial-proposal.json')
         result['partial_migration']=read(folder/'partial-migration.json')
         result['repair']=read(folder/'repair-plan.json')
@@ -493,10 +547,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/github/cancel':return self.send(200,studio.login.cancel())
             if path=='/api/plan':return self.send(200,studio.create(payload))
             if path=='/api/survey':return self.send(200,studio.start_survey(payload))
-            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply)',path)
+            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply|connection-check)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')
             elif action=='verify':data=studio.verify(key)
+            elif action=='connection-check':data=studio.connection_task(key)
             elif action in ('partial-preview','partial-apply'):data=studio.partial_task(key,payload,action=='partial-apply')
             elif action in ('repair-preview','repair-apply'):data=studio.repair_task(key,payload,action=='repair-apply')
             elif action=='acceptance':data=studio.acceptance(key,payload)

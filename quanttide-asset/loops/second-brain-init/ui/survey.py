@@ -2,6 +2,7 @@
 import base64
 from datetime import datetime, timezone
 import json
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -9,7 +10,7 @@ from urllib.request import Request, urlopen
 def now():
     return datetime.now(timezone.utc).isoformat()
 
-def get(path):
+def _get_once(path):
     try:
         request=Request('https://api.github.com/'+path,headers={'Accept':'application/vnd.github+json','User-Agent':'second-brain-init-readonly'})
         with urlopen(request,timeout=12) as response:
@@ -21,6 +22,16 @@ def get(path):
         return {'status':'unknown','http_status':exc.code,'reason':reason}
     except (URLError,TimeoutError,OSError,ValueError):
         return {'status':'unknown','reason':'网络失败或响应无效，请重新调查。'}
+
+def get(path):
+    # Retry only transient read failures; never bypass unknown/changed rule gates.
+    for attempt in range(3):
+        result = _get_once(path)
+        if result['status'] == 'ok' or result.get('http_status') not in (None, 500, 502, 503, 504):
+            return result
+        if attempt < 2:
+            time.sleep(0.3 * (attempt + 1))
+    return result
 
 def text_file(owner,repo,path,ref=None):
     result=get('repos/'+owner+'/'+repo+'/contents/'+path+('?ref='+quote(ref,safe='') if ref else ''))
@@ -53,3 +64,26 @@ def inspect(organization,names,source,root='quanttide'):
     report['finished_at']=now()
     report['note']='时间戳表示这次观察的时间；各请求不是原子快照。404 与失败不代表名称可用，创建仍需独立方案及执行前复核。'
     return report
+
+
+def rules_error(rules):
+    """Keep an unavailable observation distinct from a confirmed content change."""
+    if rules.get('status') == 'same':
+        return ''
+    if rules.get('status') == 'changed':
+        return '已确认在线章程内容与插件采用版本不同。请维护者审阅差异并更新规则后再生成方案。'
+    reasons = []
+    for key, label in (('adopted_file', '采用版本'), ('latest_file', '在线版本')):
+        item = rules.get(key, {})
+        if item.get('status') != 'ok' or not item.get('sha'):
+            reasons.append(label + '：' + item.get('reason', '未取得可核对的文件版本。') +
+                           ('（HTTP ' + str(item['http_status']) + '）' if item.get('http_status') else ''))
+    return '暂时无法读取章程，尚不能判断规则是否变化。' + '；'.join(reasons) + ' 请稍后重试；若尚未生成方案，返回填写后重新生成。持续失败时导出诊断包。'
+
+
+def rules_diagnostic(rules):
+    result = {key: rules.get(key) for key in ('status', 'adopted')}
+    for key in ('adopted_file', 'latest_file'):
+        result[key] = {k: v for k, v in rules.get(key, {}).items()
+                       if k in ('status', 'sha', 'reason', 'http_status')}
+    return result

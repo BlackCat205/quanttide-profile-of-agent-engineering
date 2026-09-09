@@ -34,7 +34,7 @@ sys.path.insert(0,str(HERE))
 import survey
 from github_login import Login
 import repair
-VERSION='0.6.1'
+VERSION='0.6.2'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -178,7 +178,7 @@ class Studio:
                 self.set_meta(folder,phase='正在读取目标仓库与章程，尚未写入 GitHub。')
                 observation=survey.inspect(org,[root,'quanttide-'+domain['short_name']]+[mapping[k]['repo'] for k in specification['initial_assets']],specification['sources']['bylaw'],root=root)
                 e.save(folder/'survey.json',observation)
-                e.require(observation['rules']['status']=='same','在线章程变化或无法核对；请维护者核对规则，不能继续。')
+                e.require(observation['rules']['status']=='same',survey.rules_error(observation['rules']))
                 for row in observation['repositories']:
                     if row['name']==root and mode=='existing':e.require(bool(row.get('commit')),'未找到可读取的总入口；第一次请选“新建测试入口”，已有入口请检查名称与权限。')
                     elif row['status']=='exists':raise e.WorkflowError('新建目标 '+row['name']+' 已存在；请改名或单独调查维护。')
@@ -224,7 +224,9 @@ class Studio:
                             adopted=plan['sources']['bylaw'];owner,repo=adopted['repository'].split('/')
                             latest=survey.text_file(owner,repo,adopted['path'])
                             baseline=read(folder/'survey.json',{}).get('rules',{}).get('adopted_file',{})
-                            e.require(latest['status']=='ok' and latest.get('sha')==baseline.get('sha'),'执行前章程变化或无法核对，停止。')
+                            rules={'adopted_file':baseline,'latest_file':latest,'status':('same' if latest.get('sha')==baseline.get('sha') else 'changed') if latest.get('status')=='ok' and latest.get('sha') and baseline.get('sha') else 'unknown'}
+                            check['rules']=survey.rules_diagnostic(rules)
+                            e.require(rules['status']=='same',survey.rules_error(rules))
                         check['status']='passed'
                     except Exception as exc:
                         check.update(status='blocked',reason=cleaned_error(exc));raise
@@ -335,6 +337,10 @@ class Studio:
         report=read(folder/'verification-report.json',{})
         report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
         records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','owned_files')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
+        observation=read(folder/'survey.json',{})
+        records['diagnosis.json']['survey']={k:observation.get(k) for k in ('started_at','finished_at','access')}
+        records['diagnosis.json']['survey']['rules']=survey.rules_diagnostic(observation.get('rules',{}))
+        records['diagnosis.json']['pre_execution_rules']=read(folder/'pre-execution-check.json',{}).get('rules')
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
             for name,data in records.items():archive.writestr(name,json.dumps(scrub(data),ensure_ascii=False,indent=2))

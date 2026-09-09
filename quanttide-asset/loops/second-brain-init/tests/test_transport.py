@@ -1,5 +1,7 @@
 """Transport fault injection; no external service writes."""
+import json
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 import test_recovery
@@ -41,10 +43,19 @@ class TransportTests(unittest.TestCase):
         self.assertNotIn('ghp_secret',str(self.events))
     def test_local_snapshot_does_not_contact_remote(self):
         from pathlib import Path
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             provider=e.Provider(Path(tmp))
             before=e.snapshot(provider,['test'])
             with patch.object(provider,'info',side_effect=AssertionError('network')),patch.object(provider,'head',side_effect=AssertionError('network')):
                 self.assertEqual(e.snapshot(provider,['test'],baseline=before),before)
+    def test_github_head_uses_authenticated_api_not_git_transport(self):
+        info={'exists':True,'branch':'feature/test'}
+        response=subprocess.CompletedProcess([],0,json.dumps({'sha':'abc123'}),'')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(e,'command',return_value=response) as command:
+            provider=e.Provider(tmp,'github','Example')
+            self.assertEqual(provider.head('test',info),'abc123')
+            args=command.call_args.args[0]
+            self.assertEqual(args[:2],['gh','api'])
+            self.assertIn('commits/feature%2Ftest',args[2])
+            self.assertNotIn('ls-remote',args)
 if __name__=='__main__':unittest.main()

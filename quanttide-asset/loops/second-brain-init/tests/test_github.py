@@ -96,9 +96,17 @@ class LocalGithubTransport:
                     if remote.exists():raise e.WorkflowError('HTTP 422 simulated name conflict')
                     self.real(['git','init','--bare','--initial-branch=main',remote]);self.mutations.append(name);data={}
                 elif args[2].startswith('repos/'+self.owner+'/'):
-                    name=args[2].split('/')[-1];remote=self.path/(name+'.git')
+                    parts=args[2].split('/');name=parts[2];remote=self.path/(name+'.git')
                     if not remote.exists():return subprocess.CompletedProcess(args,1,'','gh: Not Found (HTTP 404)')
-                    data={'id':name,'owner':{'id':205},'full_name':self.owner+'/'+name,'default_branch':'main','visibility':'public','permissions':{'push':True}}
+                    if len(parts)>3 and parts[3]=='commits':
+                        found=self.real(['git','--git-dir',remote,'rev-parse',parts[4]],check=False)
+                        if found.returncode:return subprocess.CompletedProcess(args,1,'','gh: Git Repository is empty. (HTTP 409)')
+                        data={'sha':found.stdout.strip()}
+                    elif len(parts)>5 and parts[3:6]==['git','ref','tags']:
+                        found=self.real(['git','--git-dir',remote,'rev-parse','refs/tags/'+'/'.join(parts[6:])],check=False)
+                        if found.returncode:return subprocess.CompletedProcess(args,1,'','gh: Not Found (HTTP 404)')
+                        data={'object':{'sha':found.stdout.strip()}}
+                    else:data={'id':name,'owner':{'id':205},'full_name':self.owner+'/'+name,'default_branch':'main','visibility':'public','permissions':{'push':True}}
                 else:raise AssertionError(args)
                 return subprocess.CompletedProcess(args,0,json.dumps(data),'')
         if args[0]=='git':

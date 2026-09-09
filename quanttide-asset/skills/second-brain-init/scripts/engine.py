@@ -15,10 +15,17 @@ import sys
 import time
 import threading
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.1'
+VERSION = '0.4.2'
+COMPATIBLE_ENGINE_SHA256S = {
+    # 0.4.1: execution operations and generated content are unchanged. 0.4.2
+    # replaces redundant Git read probes with authenticated GitHub API reads
+    # and adds exact local-phase reconciliation for interrupted runs.
+    'b186fe8ed1b59b4fbb2f3636870531f6e41ca6cb98e8fb1306719fa115ce1258',
+}
 verification_observer = threading.local()
 request_observer = threading.local()
 SKILL = Path(__file__).resolve().parents[1]
@@ -198,8 +205,27 @@ class Provider:
         info = self.info(name) if info is None else info
         if not info['exists']:
             return None
+        if self.kind == 'github':
+            endpoint = f'repos/{self.organization}/{slug(name)}/commits/'+quote(info['branch'], safe='')
+            result=command(['gh','api',endpoint],check=False)
+            if result.returncode:
+                if '(HTTP 409)' in result.stderr:return None
+                raise RemoteReadError(f'无法核对 {name} 的默认分支提交；网络、登录或权限错误。')
+            data = json.loads(result.stdout)
+            require(bool(data.get('sha')), f'{name} 的默认分支没有可核对的提交。')
+            return data['sha']
         raw = command(['git', 'ls-remote', self.remote(name), 'refs/heads/'+info['branch']]).stdout.strip()
         return raw.split()[0] if raw else None
+
+    def tag_exists(self, name, tag):
+        if self.kind == 'github':
+            endpoint=f'repos/{self.organization}/{slug(name)}/git/ref/tags/'+quote(tag,safe='')
+            result=command(['gh','api',endpoint],check=False)
+            if result.returncode:
+                if '(HTTP 404)' in result.stderr:return False
+                raise RemoteReadError(f'无法核对 {name} 的标签；网络、登录或权限错误。')
+            return True
+        return bool(command(['git','ls-remote',self.remote(name),'refs/tags/'+tag]).stdout)
 
     def ensure(self, name, allow_create, title, require_new=False):
         path = self.repo(name)
@@ -484,6 +510,64 @@ def recovery_snapshot_matches(current, state):
             if current.get(name) == candidate: adjusted[name] = candidate
     return current == adjusted
 
+def engine_sha256():
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+def engine_compatible(plan):
+    return plan.get('engine_sha256') in ({engine_sha256()} | COMPATIBLE_ENGINE_SHA256S)
+
+def local_changed_paths(repo):
+    pending=set(filter(None,git(repo,'ls-files','--modified','--others','--exclude-standard','-z').stdout.split('\0')))
+    staged=set(filter(None,git(repo,'diff','--cached','--name-only','-z').stdout.split('\0')))
+    return pending | staged
+
+def reconcile_pending_local_phase(provider,plan,state):
+    """Recognize an exact local phase receipt left by an interrupted process.
+
+    Network writes are never repeated here. Files, repository identity and the
+    local commit boundary must match the durable workflow-owned hashes before a
+    checkpoint is advanced.
+    """
+    pending=state.get('pending_phase') or {}
+    stage,name=pending.get('stage'),pending.get('repo')
+    if stage not in ('downloaded','files-written','staged','committed') or name not in plan['names']:
+        return False
+    before=state['checkpoint'][name]
+    observed=snapshot(provider,[name])[name]
+    identity_keys=('remote','remote_exists','repository_id','owner_id')
+    require(all(observed.get(key)==before.get(key) for key in identity_keys),
+            '断点恢复时远端仓库身份或提交已变化，请人工检查。')
+    repo=provider.repo(name)
+    if stage=='downloaded':
+        require(before.get('local') is None and observed.get('local')==observed.get('remote')
+                and not observed.get('status') and observed.get('origin')==provider.remote(name),
+                '下载断点与远端状态不一致，不能自动接续。')
+    else:
+        executor=Executor(plan,state.get('owned_files'))
+        require(bool(state.get('owned_content')) and executor.owned_content()==state['owned_content'],
+                '断点中的工作流文件内容已变化，不能自动接续。')
+        allowed=set((state.get('owned_files') or {}).get(name,[]))
+        require(all(observed.get(key)==before.get(key) for key in ('branch','origin')),
+                '断点中的本地分支或来源已变化，不能自动接续。')
+        old_rules,new_rules=before.get('rules',{}),observed.get('rules',{})
+        require(all(old_rules.get(path)==new_rules.get(path) for path in set(old_rules)|set(new_rules) if path not in allowed),
+                '断点中的非工作流规则文件已变化，不能自动接续。')
+        if stage in ('files-written','staged'):
+            require(observed.get('local')==before.get('local')
+                    and local_changed_paths(repo)<=allowed,
+                    '断点中的本地变更超出工作流范围，不能自动接续。')
+        else:
+            require(not observed.get('status') and before.get('local')
+                    and git(repo,'rev-parse','HEAD^').stdout.strip()==before.get('local'),
+                    '断点中的本地提交不是已核对提交的直接后继，不能自动接续。')
+            changed=set(filter(None,git(repo,'diff','--name-only','-z',before['local'],observed['local']).stdout.split('\0')))
+            require(changed<=allowed,'断点提交包含工作流范围外的文件，不能自动接续。')
+    state['checkpoint'][name]=observed
+    state.setdefault('phases',[]).append({'op':pending.get('op'),'repo':name,'kind':stage,
+                                          'status':'passed','at':now(),'recovered_from':'durable-local-receipt'})
+    state.pop('pending_phase',None)
+    return True
+
 def operation_names(plan, op):
     """Repositories whose state can affect this one operation."""
     return sorted({op.get(key) for key in ('repo', 'child', 'new_name')
@@ -535,7 +619,7 @@ def load_plan(run, readonly=False):
     expected = plan.pop('id')
     require(digest(plan) == expected, '计划内容已变化，请重新生成并确认。')
     plan['id'] = expected
-    require(readonly or plan['engine_sha256'] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), '执行器版本已变化；旧任务请使用检查或专用修复入口，未开始任务需重新生成计划。')
+    require(readonly or engine_compatible(plan), '执行器版本已变化；旧任务请使用检查或专用修复入口，未开始任务需重新生成计划。')
     require(plan['spec_sha256'] == hashlib.sha256(SPEC.read_bytes()).hexdigest(), '配置规格已变化，请重新生成计划。')
     return plan
 
@@ -770,7 +854,7 @@ def verify(plan, approval=None):
                     for old in check['old_names']:
                         require(git(repo,'grep','-l','-F','--',old,check=False).returncode==1, '仍存在旧仓库名称引用')
             elif check['kind']=='tag':
-                require(bool(command(['git','ls-remote',provider.remote(check['repo']),'refs/tags/v'+check['version']]).stdout), '远端版本标签不存在')
+                require(provider.tag_exists(check['repo'],'v'+check['version']), '远端版本标签不存在')
             details.append({'check':check,'passed':True})
         except WorkflowError as exc:
             details.append({'check':check,'repo':check.get('repo'),'passed':False,'status':'unknown' if isinstance(exc,RemoteReadError) else 'failed','reason':str(exc),'checked_at':now()})
@@ -828,6 +912,8 @@ def apply(run,prechecked=None):
             require(report['status']=='passed','既有结果已发生漂移，请检查报告。')
             return report
         if reconcile_creation_response(provider,plan,state):
+            save(state_file,state)
+        if reconcile_pending_local_phase(provider,plan,state):
             save(state_file,state)
         initial_names = preflight_names(plan,state)
         if prechecked is None:

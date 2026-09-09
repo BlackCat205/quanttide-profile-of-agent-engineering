@@ -1,10 +1,13 @@
 """Real local Git fault injection for phase receipts; never writes to GitHub."""
 import copy
 from pathlib import Path
+import shutil
+import time
 import unittest
 from unittest.mock import patch
 import test_recovery
 e=test_recovery.e
+ui=test_recovery.ui
 import partial_recovery
 
 class PartialTests(unittest.TestCase):
@@ -72,6 +75,42 @@ class PartialTests(unittest.TestCase):
             with self.assertRaisesRegex(e.WorkflowError,'lost push'):e.apply(self.run)
         self.assertEqual(e.apply(self.run)['status'],'passed')
         self.assertEqual(seen[0],e.git(self.repo,'rev-parse','HEAD').stdout.strip())
+
+    def test_staged_receipt_is_verified_and_resumed_after_process_loss(self):
+        original=e.snapshot;failed=[]
+        def interrupt(provider,names,*args,**kwargs):
+            if kwargs.get('baseline') is not None and not failed:
+                repo=provider.repo(names[0])
+                if (repo/'.git').exists() and e.git(repo,'diff','--cached','--quiet',check=False).returncode:
+                    failed.append(True)
+                    raise OSError('injected process loss after staging')
+            return original(provider,names,*args,**kwargs)
+        with patch.object(e,'snapshot',side_effect=interrupt):
+            with self.assertRaisesRegex(e.WorkflowError,'process loss'):e.apply(self.run)
+        interrupted=e.read_json(self.run/'execution-log.json')
+        self.assertEqual(interrupted['pending_phase']['stage'],'staged')
+        self.assertEqual(interrupted['status'],'paused')
+        studio=ui.Studio(Path(self.tmp.name)/'studio',test_mode=True)
+        key='0123456789abcdef';folder=studio.storage/'runs'/key
+        folder.parent.mkdir(parents=True);shutil.copytree(self.run,folder)
+        e.save(folder/'ui.json',{'id':key,'status':'paused','provider':'local'})
+        with patch.object(studio,'build_report'):
+            studio.execute(key,{'plan_id':self.plan['id']},resume=True)
+            until=time.monotonic()+20
+            while key in studio.active and time.monotonic()<until:time.sleep(.01)
+        self.assertNotIn(key,studio.active)
+        self.assertEqual(e.read_json(folder/'ui.json')['status'],'completed')
+        recovered=e.read_json(folder/'execution-log.json')
+        self.assertTrue(any(p.get('recovered_from')=='durable-local-receipt' for p in recovered['phases']))
+
+    def test_041_plan_hash_is_explicitly_compatible(self):
+        old_hash=next(iter(e.COMPATIBLE_ENGINE_SHA256S))
+        self.assertTrue(e.engine_compatible({'engine_sha256':old_hash}))
+        self.assertFalse(e.engine_compatible({'engine_sha256':'unknown'}))
+        plan=e.read_json(self.run/'execution-plan.json');plan.pop('id')
+        plan['version']='0.4.1';plan['engine_sha256']=old_hash;plan['id']=e.digest(plan)
+        e.save(self.run/'execution-plan.json',plan)
+        self.assertEqual(e.load_plan(self.run)['id'],plan['id'])
 
     def test_remote_change_is_not_accepted_as_lost_response(self):
         before={'repo':{'local':'new','remote':'old','status':'','repository_id':1}}

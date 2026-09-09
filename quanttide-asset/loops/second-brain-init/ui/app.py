@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.0'
+VERSION='0.8.1'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -230,6 +230,9 @@ class Studio:
                         if e.reconcile_creation_response(provider,plan,log):
                             e.save(folder/'execution-log.json',log)
                             expected=log['checkpoint']
+                        if e.reconcile_pending_local_phase(provider,plan,log):
+                            e.save(folder/'execution-log.json',log)
+                            expected=log['checkpoint']
                         names=e.preflight_names(plan,log)
                         current=e.snapshot(provider,names)
                         check.update(current=current,scope=names,
@@ -250,7 +253,13 @@ class Studio:
                     finally:
                         check['finished_at']=e.now();e.save(folder/'pre-execution-check.json',check)
                     e.apply(folder,prechecked=current)
-                except e.WorkflowError:
+                except e.WorkflowError as exc:
+                    log=read(folder/'execution-log.json',{})
+                    if log:
+                        log['status']='paused';log['error']=str(exc)
+                        log.setdefault('first_error',str(exc))
+                        if log.get('current'):log['current']['status']='failed'
+                        e.save(folder/'execution-log.json',log)
                     if (folder/'verification-report.json').is_file():self.build_report(folder)
                     raise
                 self.build_report(folder)
@@ -438,7 +447,8 @@ class Studio:
 
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
-        result=dict(meta,first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and plan.get('engine_sha256')!=hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest() and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and plan.get('engine_sha256')==hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        compatible=bool(plan and e.engine_compatible(plan))
+        result=dict(meta,first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))

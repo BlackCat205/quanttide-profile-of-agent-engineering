@@ -63,6 +63,56 @@ class PartialTests(unittest.TestCase):
         self.assertEqual(e.apply(self.run)['status'],'passed')
         self.assertTrue(list((self.repo.parent.parent/'downloads').glob('*-clone-*/repository/partial-file')))
 
+    def test_transient_clone_retries_in_new_directory_and_completes(self):
+        original=e.command;failed=[]
+        def fail_once(args,*a,**kw):
+            if list(args)[:2]==['git','clone'] and not failed:
+                failed.append(Path(args[-1]));failed[0].mkdir(parents=True);(failed[0]/'partial').write_text('preserved')
+                raise e.WorkflowError('连接中断或超时')
+            return original(args,*a,**kw)
+        with patch.object(e,'command',side_effect=fail_once):
+            self.assertEqual(e.apply(self.run)['status'],'passed')
+        self.assertEqual(len(failed),1)
+        self.assertTrue((failed[0]/'partial').is_file())
+        self.assertTrue(self.repo.is_dir())
+
+    def test_interrupted_mount_is_reconciled_from_verified_local_child(self):
+        provider=e.Provider(self.work)
+        names=['quanttide-context-of-sample-engineering','quanttide-sample']
+        self.plan={
+            'schema_version':2,'version':e.VERSION,'scenario':'new-domain','provider':'local',
+            'organization':'quanttide','workspace':str(self.work),'config':{'root_repo':'quanttide-sample'},
+            'names':names,'before':e.snapshot(provider,names),
+            'operations':[
+                {'id':'001','kind':'ensure-repo','repo':names[0],'allow_create':True,'title':'child'},
+                {'id':'002','kind':'finish','repo':names[0]},
+                {'id':'003','kind':'ensure-repo','repo':names[1],'allow_create':True,'title':'parent'},
+                {'id':'004','kind':'mount','repo':names[1],'child':names[0],'path':'contexts/sample'},
+                {'id':'005','kind':'finish','repo':names[1]},
+            ],'checks':[],
+            'engine_sha256':__import__('hashlib').sha256(Path(e.__file__).read_bytes()).hexdigest(),
+            'spec_sha256':__import__('hashlib').sha256(e.SPEC.read_bytes()).hexdigest(),
+        }
+        self.plan['id']=e.digest(self.plan)
+        e.save(self.run/'execution-plan.json',self.plan)
+        e.approve(self.run,'test',self.plan['id'],simulated=True)
+        self.repo=provider.repo(names[1])
+        original=e.Executor.materialize;failed=[]
+        def interrupt(executor,*args,**kwargs):
+            result=original(executor,*args,**kwargs)
+            if not failed:
+                failed.append(True);raise OSError('injected process loss after local mount')
+            return result
+        with patch.object(e.Executor,'materialize',interrupt):
+            with self.assertRaisesRegex(e.WorkflowError,'process loss'):e.apply(self.run)
+        interrupted=e.read_json(self.run/'execution-log.json')
+        self.assertEqual(interrupted['current']['kind'],'mount')
+        self.assertLess(len(interrupted['completed']),len(self.plan['operations']))
+        self.assertEqual(e.apply(self.run)['status'],'passed')
+        recovered=e.read_json(self.run/'execution-log.json')
+        self.assertTrue(any(row.get('recovered_from')=='verified-local-mount' for row in recovered['events']))
+        self.assertEqual(len(recovered['completed']),len(self.plan['operations']))
+
     def test_push_response_lost_resumes_without_duplicate_commit(self):
         original=e.git;seen=[]
         def fail(repo,*args,**kw):
@@ -111,6 +161,11 @@ class PartialTests(unittest.TestCase):
         plan['version']='0.4.1';plan['engine_sha256']=old_hash;plan['id']=e.digest(plan)
         e.save(self.run/'execution-plan.json',plan)
         self.assertEqual(e.load_plan(self.run)['id'],plan['id'])
+
+    def test_044_sample4_plan_is_compatible_without_rewriting_it(self):
+        sample4_engine='480f5175d85a8a82ca1ca2b7f342982cdf620d620603cf53f192b300e4abaab2'
+        self.assertIn(sample4_engine,e.COMPATIBLE_ENGINE_SHA256S)
+        self.assertTrue(e.engine_compatible({'engine_sha256':sample4_engine}))
 
     def test_remote_change_is_not_accepted_as_lost_response(self):
         before={'repo':{'local':'new','remote':'old','status':'','repository_id':1}}

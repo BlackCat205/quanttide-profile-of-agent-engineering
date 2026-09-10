@@ -145,7 +145,45 @@ class UITests(unittest.TestCase):
         script=(ROOT/'ui/static/app.js').read_text(encoding='utf-8')
         self.assertIn('id="retry-plan"',html)
         self.assertIn("'/retry-plan'",script)
-        self.assertIn("$('#retry-plan').hidden=v.has_plan",script)
+        self.assertIn("$('#retry-plan').hidden=r?.action!=='retry-plan'",script)
         self.assertIn("if(!v.has_plan)$('#connection-check').disabled=true",script)
+
+    def test_paused_execution_exposes_one_human_readable_recovery_action(self):
+        key,v=self.plan();folder=self.studio.folder(key)
+        ui.e.save(folder/'approval-record.json',{'plan_id':v['plan']['id'],'accepted':True})
+        plan=ui.e.read_json(folder/'execution-plan.json')
+        log={'plan_id':plan['id'],'completed':['001','002'],'checkpoint':plan['before'],'events':[],
+             'current':{'op':'003','kind':'ensure-repo','repo':'quanttide-sample-toolkit','status':'failed'}}
+        ui.e.save(folder/'execution-log.json',log)
+        ui.e.save(folder/'requests.json',[{'tool':'git','operation':'clone','status':'failed','category':'connection'}])
+        self.studio.set_meta(folder,status='paused',error='连接中断')
+        result=self.studio.view(key);recovery=result['recovery']
+        self.assertEqual(recovery['action'],'resume')
+        self.assertEqual(recovery['action_label'],'自动核对并继续')
+        self.assertIn('2/27',recovery['title'])
+        self.assertIn('已完成项不会重做',recovery['protected'])
+        self.assertEqual(len(recovery['steps']),3)
+        self.assertIn('仓库 ID',recovery['steps'][1])
+
+    def test_recovery_matrix_separates_verify_only_from_manual_drift(self):
+        key,v=self.plan();folder=self.studio.folder(key);plan=ui.e.read_json(folder/'execution-plan.json')
+        ui.e.save(folder/'approval-record.json',{'plan_id':plan['id'],'accepted':True})
+        ui.e.save(folder/'execution-log.json',{'plan_id':plan['id'],'completed':[op['id'] for op in plan['operations']],
+                  'checkpoint':plan['before'],'events':[],'current':{'kind':'verify','repo':'全部目标仓库','status':'failed'}})
+        self.studio.set_meta(folder,status='paused',error='最终读取暂时失败')
+        completed=self.studio.view(key)['recovery']
+        self.assertEqual(completed['action'],'verify')
+        self.assertIn('不会再次创建仓库',completed['summary'])
+
+        plan.pop('id');plan['engine_sha256']='unknown-engine';plan['id']=ui.e.digest(plan)
+        ui.e.save(folder/'execution-plan.json',plan)
+        ui.e.save(folder/'approval-record.json',{'plan_id':plan['id'],'accepted':True})
+        ui.e.save(folder/'execution-log.json',{'plan_id':plan['id'],'completed':['001'],'checkpoint':plan['before'],
+                  'events':[],'current':{'op':'002','kind':'domain-docs','repo':'quanttide-sample','status':'failed'},
+                  'error':'工作流文件内容已变化'})
+        self.studio.set_meta(folder,status='paused',error='工作流文件内容已变化')
+        drift=self.studio.view(key)['recovery']
+        self.assertEqual(drift['action'],'diagnostics')
+        self.assertIn('不要删除或覆盖',drift['steps'][0])
 
 if __name__=='__main__':unittest.main()

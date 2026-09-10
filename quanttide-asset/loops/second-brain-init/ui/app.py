@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.3'
+VERSION='0.8.4'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -73,6 +73,43 @@ def readable_report(report):
         for row in result.get('rows',[]):
             if row['key']=='mounts' and mounts and all(x['status']=='unknown' for x in mounts):row['status']='unknown'
     return result
+
+def recovery_guidance(folder,meta,plan,log,requests):
+    if meta.get('status')!='paused':return None
+    failed=next((row for row in reversed(requests) if row.get('status') in ('failed','unknown')),None)
+    evidence=[];current=log.get('current') or log.get('intent') or {}
+    if current.get('repo'):evidence.append('暂停位置：'+current['repo']+' · '+current.get('kind','当前步骤'))
+    if failed:evidence.append('最近失败通道：'+failed.get('tool','外部服务')+' '+failed.get('operation','请求')+' · '+failed.get('category','未分类'))
+    if not plan:
+        return {'code':'plan-missing','title':'尚未形成创建方案','summary':'没有进入人工确认，也没有开始创建或推送仓库。','protected':'原填写内容和这条记录已保留。','action':'retry-plan','action_label':'重新生成方案','evidence':evidence,
+                'steps':['点击“重新生成方案”。','程序重新读取规则和仓库现状；仍然不会直接写入。','看到新方案后再逐项确认。']}
+    completed=len(log.get('completed',[]));total=len(plan.get('operations',[]));approved=(folder/'approval-record.json').is_file();compatible=e.engine_compatible(plan)
+    if not approved:
+        return {'code':'plan-unapproved','title':'方案生成后检查未完成','summary':'没有人工确认，因此程序没有权限继续写入。','protected':'已生成方案保留；没有执行创建步骤。','action':'return-form','action_label':'返回填写','evidence':evidence,
+                'steps':['返回填写页核对需求。','重新生成并审阅方案。','只有勾选确认后才会创建或推送。']}
+    if read(folder/'repair-plan.json') or read(folder/'repair-check.json'):
+        return {'code':'repair-review','title':'需要核对独立修复方案','summary':'创建记录已保留；只允许页面列出的窄范围修复。','protected':'不会重建仓库或改写原执行记录。','action':'repair','action_label':'查看修复方案','evidence':evidence,
+                'steps':['阅读页面列出的目标仓库和唯一文件。','确认内容后执行窄范围修复。','程序重新核验，不修改原执行记录。']}
+    if compatible and completed<total:
+        connection=failed and failed.get('category')=='connection'
+        return {'code':'resume-safe-check','title':f'已保存 {completed}/{total} 项，可从下一项核对恢复','summary':('网络数据通道中断；' if connection else '当前步骤未完成；')+'程序会先核对仓库身份、提交和工作流文件，再决定是否继续。','protected':'已完成项不会重做；推送结果不明时先查远端，不会盲目重复推送。','action':'resume','action_label':'自动核对并继续','evidence':evidence,
+                'steps':['点击“自动核对并继续”。','程序核对仓库 ID、远端提交、本机提交和已生成文件。','核对一致才从下一项继续；网络仍不可用时保留同一检查点，可稍后再次点击。']}
+    if completed==total:
+        return {'code':'verify-only','title':'创建步骤已全部保存，只需重新核验','summary':'不会再次创建仓库、提交文件或推送。','protected':'全部创建步骤及检查点已保留。','action':'verify','action_label':'重新检查最终结果','evidence':evidence,
+                'steps':['点击“重新检查最终结果”。','程序只读核对 GitHub 提交、目录、文档和连接。','全部通过后再填写人工验收意见。']}
+    if log.get('current',{}).get('kind')=='ensure-repo':
+        return {'code':'legacy-review','title':'旧版建仓中断，需要先核对接续凭证','summary':'页面会检查仓库 ID、提交和初始文件，再由你确认是否接续。','protected':'原计划、原确认和仓库均不改写。','action':'partial','action_label':'检查接续方案','evidence':evidence,
+                'steps':['点击“检查接续方案”。','核对页面展示的仓库 ID、提交和初始 README。','确认后生成兼容当前执行器的新恢复任务。']}
+    reason=' '.join(filter(None,(meta.get('error'),log.get('error'))))
+    if '锁' in reason:
+        steps=['关闭其他仍在运行的本工具窗口或启动器。','重新打开本工具并回到这条记录。','确认没有任务正在执行后再尝试；锁仍存在时把页面显示的保存位置交给维护者检查。']
+    elif any(word in reason for word in ('范围外','文件内容已变化','仓库已变化','状态已变化')):
+        steps=['不要删除或覆盖提示中的本机文件。','请仓库维护者判断这些修改应提交、移走还是保留。','处理后重新调查并生成新方案；原任务继续作为审计记录保留。']
+    elif any(word in reason for word in ('执行器版本','配置规格','计划内容已变化')):
+        steps=['保留这条旧记录，不手工修改 JSON。','使用当前版本重新填写并生成方案。','新方案会重新读取现状，只规划尚未完成的合规动作。']
+    else:
+        steps=['先阅读上方暂停位置与错误原文。','不要手工删除仓库或反复执行 Git 命令。','只有程序无法给出安全自动操作时，才导出诊断包给维护者。']
+    return {'code':'manual-review','title':'检测到版本或现场超出自动恢复边界','summary':'为避免覆盖他人文件或错误仓库，程序不会自动处理。','protected':'已有仓库、文件和日志保持原状。','action':'diagnostics','action_label':'导出诊断包','evidence':evidence,'steps':steps}
 
 def naming_rules():
     specification=e.read_yaml(e.SPEC)
@@ -273,6 +310,9 @@ class Studio:
                             e.save(folder/'execution-log.json',log)
                             expected=log['checkpoint']
                         if e.reconcile_pending_local_phase(provider,plan,log):
+                            e.save(folder/'execution-log.json',log)
+                            expected=log['checkpoint']
+                        if e.reconcile_interrupted_mount(provider,plan,log):
                             e.save(folder/'execution-log.json',log)
                             expected=log['checkpoint']
                         names=e.preflight_names(plan,log)
@@ -491,7 +531,7 @@ class Studio:
             return record
 
     def view(self,key):
-        folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
+        folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{});requests=read(folder/'requests.json',[])
         compatible=bool(plan and e.engine_compatible(plan))
         result=dict(meta,has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
@@ -515,7 +555,8 @@ class Studio:
         result['verification_progress']=read(folder/'verification-progress.json')
         result['pending_phase']=log.get('pending_phase')
         result['connection_check']=read(folder/'connection-check.json')
-        result['last_request']=next(iter(reversed(read(folder/'requests.json',[]))),None)
+        result['last_request']=next(iter(reversed(requests)),None)
+        result['recovery']=recovery_guidance(folder,meta,plan,log,requests)
         result['partial_proposal']=read(folder/'partial-proposal.json')
         result['partial_migration']=read(folder/'partial-migration.json')
         result['repair']=read(folder/'repair-plan.json')

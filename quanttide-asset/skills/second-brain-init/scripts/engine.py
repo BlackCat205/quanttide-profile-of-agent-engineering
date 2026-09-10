@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.4'
+VERSION = '0.4.5'
 COMPATIBLE_ENGINE_SHA256S = {
     # 0.4.1: execution operations and generated content are unchanged. 0.4.2
     # replaces redundant Git read probes with authenticated GitHub API reads
@@ -32,6 +32,10 @@ COMPATIBLE_ENGINE_SHA256S = {
     # 0.4.3: same execution contract; 0.4.4 allows the UI to provide
     # commit-pinned, read-only inspection documents without cloning a repo.
     'fbab336544acde82fbbbc1674a98ffca265859efb52af35ada28c6285ddab378',
+    # 0.4.4: approved operation scopes are unchanged. 0.4.5 materializes
+    # submodules from already verified local child repositories and can
+    # reconcile an interrupted mount without repeating completed operations.
+    '480f5175d85a8a82ca1ca2b7f342982cdf620d620603cf53f192b300e4abaab2',
 }
 verification_observer = threading.local()
 request_observer = threading.local()
@@ -186,8 +190,20 @@ def command(argv, cwd=None, check=True):
             raise WorkflowError(f'找不到 {args[0]}，请按使用说明安装。') from None
         except subprocess.TimeoutExpired:
             result=subprocess.CompletedProcess(args,124,'','timed out')
-        transient=any(x in result.stderr.lower() for x in ('could not resolve','failed to connect','connection was reset','connection reset','timed out','recv failure','http/2','remote end hung up','502','503','504'))
-        category='connection' if transient else 'authorization' if any(x in result.stderr.lower() for x in ('authentication','permission denied','403','401')) else 'git-or-service'
+        stderr=result.stderr.lower()
+        http_match=re.search(r'http\s+(\d{3})',stderr)
+        http_status=int(http_match.group(1)) if http_match else None
+        authorization=bool(http_status in (401,403) or any(x in stderr for x in ('authentication','permission denied')))
+        transient=any(x in stderr for x in (
+            'could not resolve','failed to connect','connection was reset','connection reset',
+            'timed out','timeout','recv failure','http/2','remote end hung up','unexpected eof',
+            'tls handshake','i/o timeout','connection refused','connection closed','502','503','504'))
+        # A read-only GitHub API request that failed without a definitive 4xx
+        # response is an unobserved remote state. It is safe to retry and must
+        # not be mislabeled as a repository defect.
+        if readonly and args[0]=='gh' and result.returncode and not authorization and not (http_status and 400<=http_status<500):
+            transient=True
+        category='authorization' if authorization else 'connection' if transient else 'git-or-service'
         event.update(status='passed' if result.returncode==0 else 'failed',category=None if result.returncode==0 else category,exit_code=result.returncode,finished_at=now(),elapsed_seconds=round(time.monotonic()-started,3))
         if network:notify_observer(callback,event)
         if not result.returncode:
@@ -297,12 +313,19 @@ class Provider:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             # Clone in an isolated attempt directory; never overwrite/delete remnants.
-            import tempfile
             downloads = path.parent.parent/'downloads'
             downloads.mkdir(parents=True,exist_ok=True)
-            attempt = Path(tempfile.mkdtemp(prefix=name+'-clone-', dir=downloads))
-            candidate = attempt/'repository'
-            command(['git', 'clone', self.remote(name), candidate])
+            candidate=None;attempt=None
+            for clone_attempt in range(3):
+                attempt = Path(tempfile.mkdtemp(prefix=name+'-clone-', dir=downloads))
+                candidate = attempt/'repository'
+                try:
+                    if clone_attempt:request_observer.http1=True
+                    command(['git', 'clone', self.remote(name), candidate])
+                    break
+                except WorkflowError as exc:
+                    if '连接中断或超时' not in str(exc) or clone_attempt==2:raise
+                    time.sleep(.3*(clone_attempt+1))
             require(not path.exists(), '下载期间目标目录出现，保留下载结果并停止。')
             candidate.rename(path)
             attempt.rmdir()
@@ -718,7 +741,54 @@ class Executor:
     def block(self, repo, path, key, body):
         self.write(repo, path, content_block(text_at(repo,path),key,body))
 
-    def refresh(self, repo, mount_path, url):
+    def local_child(self, name):
+        child=self.provider.repo(name)
+        require((child/'.git').exists(), '配套仓库尚未准备到本机：'+name)
+        require(not git(child,'status','--porcelain').stdout, '配套仓库存在未提交文件：'+name)
+        return child,git(child,'rev-parse','HEAD').stdout.strip()
+
+    def materialize(self, repo, mount_path, child_name, url):
+        """Create or refresh a submodule from the verified local child repo.
+
+        Every planned child has already been cloned and checked before its
+        parent mount operation. Reusing that object store avoids a second
+        network download for every submodule while preserving the public URL
+        in .gitmodules.
+        """
+        child,commit=self.local_child(child_name)
+        location=safe_path(repo,mount_path)
+        if location.exists():
+            require(location.is_dir() and not git(location,'rev-parse','--git-dir',check=False).returncode,
+                    mount_path+' 已存在且不是可核对的子仓库。')
+            origin=git(location,'remote','get-url','origin',check=False).stdout.strip()
+            require(origin in (url,str(child)), mount_path+' 的仓库来源与计划不一致，拒绝覆盖。')
+            if git(location,'cat-file','-e',commit+'^{commit}',check=False).returncode:
+                git(location,'fetch','--no-tags',str(child),commit)
+            git(location,'checkout','--detach',commit)
+            if origin!=url:git(location,'remote','set-url','origin',url)
+        else:
+            downloads=repo.parent.parent/'downloads';downloads.mkdir(parents=True,exist_ok=True)
+            staging=Path(tempfile.mkdtemp(prefix=repo.name+'-mount-',dir=downloads))
+            candidate=staging/'repository'
+            command(['git','clone','--no-hardlinks','--no-checkout',child,candidate])
+            git(candidate,'checkout','--detach',commit)
+            git(candidate,'remote','set-url','origin',url)
+            location.parent.mkdir(parents=True,exist_ok=True)
+            require(not location.exists(), mount_path+' 在准备期间出现了其他文件，停止。')
+            candidate.rename(location)
+            try:staging.rmdir()
+            except OSError:pass
+        git(repo,'config','-f','.gitmodules','submodule.'+mount_path+'.path',mount_path)
+        git(repo,'config','-f','.gitmodules','submodule.'+mount_path+'.url',url)
+        git(repo,'update-index','--add','--cacheinfo','160000,'+commit+','+mount_path)
+        git(repo,'submodule','init','--',mount_path)
+        git(repo,'submodule','absorbgitdirs','--',mount_path)
+        self.changed.setdefault(repo.name,set()).update(['.gitmodules',mount_path])
+
+    def refresh(self, repo, mount_path, url, child_name=None):
+        if child_name:
+            self.materialize(repo,mount_path,child_name,url)
+            return
         path = safe_path(repo,mount_path)
         git(repo,'-c','protocol.file.allow=always' if self.provider.kind=='local' else 'protocol.file.allow=never','submodule','update','--init','--',mount_path)
         git(path,'fetch','origin')
@@ -743,16 +813,16 @@ class Executor:
             existing = modules(repo)
             if path in existing:
                 require(existing[path]['url']==url, f'{path} 已挂载其他仓库，拒绝覆盖。')
-                self.refresh(repo,path,url)
+                self.refresh(repo,path,url,op['child'])
             else:
                 location = safe_path(repo,path)
                 if location.is_dir() and sorted(p.name for p in location.iterdir()) == ['.gitkeep']:
                     git(repo,'rm','--',path+'/.gitkeep')
                     self.changed.setdefault(repo.name,set()).add(path+'/.gitkeep')
                     if location.exists(): location.rmdir()
-                require(not location.exists(), f'{path} 已存在，需人工处理。')
-                git(repo,'-c','protocol.file.allow=always' if provider.kind=='local' else 'protocol.file.allow=never','submodule','add',url,path)
-                self.changed.setdefault(repo.name,set()).update(['.gitmodules',path])
+                elif not location.exists() and not git(repo,'ls-files','--error-unmatch',path+'/.gitkeep',check=False).returncode:
+                    self.changed.setdefault(repo.name,set()).add(path+'/.gitkeep')
+                self.materialize(repo,path,op['child'],url)
             if getattr(provider,'phase',None):provider.phase(repo.name,'files-written')
         elif kind == 'domain-docs':
             d = op['domain']
@@ -834,7 +904,9 @@ class Executor:
                 if new != content: self.write(repo,name,new)
             git(repo,'submodule','sync','--recursive')
         elif kind == 'refresh-mounts':
-            for path, value in modules(repo).items(): self.refresh(repo,path,value['url'])
+            for path, value in modules(repo).items():
+                name=value['url'].removesuffix('/').removesuffix('.git').rsplit('/',1)[-1]
+                self.refresh(repo,path,value['url'],name if name in self.plan['names'] else None)
             if getattr(provider,'phase',None):provider.phase(repo.name,'files-written')
         elif kind == 'release-notes':
             text = text_at(repo,'CHANGELOG.md')
@@ -943,6 +1015,37 @@ def execution_locks(run, workspace):
             handle.close()
             path.unlink()
 
+def reconcile_interrupted_mount(provider,plan,state):
+    """Complete one interrupted, approved mount from verified local repos.
+
+    This accepts only the exact next plan operation and only workflow-owned
+    paths. It is intentionally narrower than a general dirty-worktree repair.
+    """
+    current=state.get('current') or state.get('intent') or {}
+    op=next((item for item in plan['operations'] if item['id']==current.get('op')),None)
+    if not op or op['kind']!='mount' or op['id'] in state.get('completed',[]):return False
+    affected=operation_names(plan,op);observed=snapshot(provider,affected)
+    identity=('remote','remote_exists','repository_id','owner_id','local','branch','origin')
+    for name in affected:
+        expected=state['checkpoint'][name]
+        require(all(observed[name].get(key)==expected.get(key) for key in identity),
+                '挂载恢复时仓库提交、身份或来源已变化，不能自动处理。')
+    parent=provider.repo(op['repo'])
+    allowed=set((state.get('owned_files') or {}).get(op['repo'],[]))|{'.gitmodules',op['path'],op['path']+'/.gitkeep'}
+    require(local_changed_paths(parent)<=allowed,
+            '挂载恢复发现计划范围外的本机文件；不会覆盖，请由维护者检查。')
+    executor=Executor(plan,state.get('owned_files'));executor.execute(op)
+    require(local_changed_paths(parent)<=allowed,
+            '挂载恢复产生了计划范围外的文件；已停止，不会提交。')
+    state.setdefault('completed',[]).append(op['id'])
+    state['owned_files']={name:sorted(paths) for name,paths in executor.changed.items()}
+    state['owned_content']=executor.owned_content()
+    state['checkpoint'].update(snapshot(provider,affected,baseline=state['checkpoint']))
+    event={'op':op['id'],'kind':op['kind'],'repo':op['repo'],'at':now(),'status':'passed','recovered_from':'verified-local-mount'}
+    state.setdefault('events',[]).append(event);state['current']=dict(event)
+    state.pop('pending_phase',None);state.pop('error',None)
+    return True
+
 
 def apply(run,prechecked=None):
     run = Path(run)
@@ -970,6 +1073,8 @@ def apply(run,prechecked=None):
         if reconcile_creation_response(provider,plan,state):
             save(state_file,state)
         if reconcile_pending_local_phase(provider,plan,state):
+            save(state_file,state)
+        if reconcile_interrupted_mount(provider,plan,state):
             save(state_file,state)
         initial_names = preflight_names(plan,state)
         if prechecked is None:

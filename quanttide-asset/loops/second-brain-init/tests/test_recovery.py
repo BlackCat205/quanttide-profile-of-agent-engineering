@@ -102,6 +102,19 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(e.WorkflowError):e.command(['git','push','origin','HEAD'])
             self.assertEqual(run.call_count,1)
 
+    def test_readonly_github_api_without_http_response_is_retried(self):
+        disconnected=subprocess.CompletedProcess([],1,'','request failed before an HTTP response')
+        ok=subprocess.CompletedProcess([],0,'{"sha":"abc"}\n','')
+        with patch.object(e.subprocess,'run',side_effect=[disconnected,ok]) as run,patch.object(e.time,'sleep'):
+            result=e.command(['gh','api','repos/example/repo/commits/main'])
+        self.assertEqual(json.loads(result.stdout)['sha'],'abc')
+        self.assertEqual(run.call_count,2)
+
+        not_found=subprocess.CompletedProcess([],1,'','HTTP 404: Not Found')
+        with patch.object(e.subprocess,'run',return_value=not_found) as run:
+            self.assertEqual(e.command(['gh','api','repos/example/missing'],check=False).returncode,1)
+        self.assertEqual(run.call_count,1)
+
     def test_diagnostics_excludes_prose_credentials_and_paths(self):
         self.pause();studio=ui.Studio(Path(self.tmp.name)/'store',test_mode=True)
         folder=studio.storage/'runs'/'0123456789abcdef';folder.mkdir(parents=True)

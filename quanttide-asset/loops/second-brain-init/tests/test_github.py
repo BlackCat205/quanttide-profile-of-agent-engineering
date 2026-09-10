@@ -83,9 +83,10 @@ class GithubUnitTests(unittest.TestCase):
 
 class LocalGithubTransport:
     def __init__(self,path):
-        self.path=path;self.owner='BlackCat205';self.mutations=[];self.clones=[];self.real=e.command
+        self.path=path;self.owner='BlackCat205';self.mutations=[];self.clones=[];self.commands=[];self.real=e.command
     def command(self,args,cwd=None,check=True):
         args=list(map(str,args))
+        self.commands.append(list(args))
         if args[0]=='gh':
             if args[1:]==['auth','status']:return subprocess.CompletedProcess(args,0,'','')
             if args[1]=='api':
@@ -136,13 +137,14 @@ class GithubWorkflowTests(unittest.TestCase):
             if time.monotonic()>until:self.fail('worker timed out')
             time.sleep(.03)
         return studio.view(key)
-    def test_two_domains_share_remote_root_and_keep_existing_links(self):
+    def test_four_domains_share_remote_root_without_redundant_mount_downloads(self):
         with tempfile.TemporaryDirectory() as temp:
             base=Path(temp);remotes=base/'bare';remotes.mkdir();transport=LocalGithubTransport(remotes)
             studio=ui.Studio(base/'studio',enable_github=True)
             real_which=e.shutil.which
             with patch.object(e,'command',side_effect=transport.command),patch.object(e.shutil,'which',side_effect=lambda name: '/fake/gh' if name=='gh' else real_which(name)),patch.object(ui.survey,'inspect',side_effect=transport.survey),patch.object(ui.survey,'text_file',return_value={'status':'ok','sha':'fixture-rules'}):
-                for short,mode in [('firsttrial','new'),('secondtrial','existing')]:
+                domains=[('firsttrial','new'),('secondtrial','existing'),('thirdtrial','existing'),('fourthtrial','existing')]
+                for short,mode in domains:
                     payload=dict(BASE,short_name=short,english_name=short+'-engineering',provider='github',organization='BlackCat205',root_repo='second-brain-test',root_mode=mode)
                     clones_before_plan=len(transport.clones)
                     key=studio.create(payload)['id'];view=self.wait(studio,key)
@@ -163,10 +165,13 @@ class GithubWorkflowTests(unittest.TestCase):
                                          ['passed','passed','passed'])
                         self.assertEqual(len(transport.mutations),count)
                 self.assertEqual(transport.mutations.count('second-brain-test'),1)
-                self.assertEqual(len(transport.mutations),15)
+                self.assertEqual(len(transport.mutations),29)
                 root=Path(view['plan']['workspace'])/'repositories/second-brain-test'
-                self.assertEqual(set(e.modules(root)),{'domains/quanttide-firsttrial','domains/quanttide-secondtrial'})
-                for name in ['firsttrial','secondtrial']:self.assertIn('quanttide-'+name,e.text_at(root,'domains/README.md'))
+                expected={'domains/quanttide-'+short for short,_ in domains}
+                self.assertEqual(set(e.modules(root)),expected)
+                for name,_ in domains:self.assertIn('quanttide-'+name,e.text_at(root,'domains/README.md'))
+                network_submodules=[args for args in transport.commands if args[0]=='git' and 'submodule' in args and any(value.startswith('https://github.com/') for value in args)]
+                self.assertFalse(network_submodules,'planned mounts must reuse verified local repositories')
                 # Existing generated names must stop the plan before any further create request.
                 count=len(transport.mutations)
                 key=studio.create(payload)['id'];blocked=self.wait(studio,key)

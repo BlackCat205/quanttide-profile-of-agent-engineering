@@ -61,14 +61,14 @@ assets:
       path: loops/second-brain-init/trials
 skills:
   second-brain-init:
-    version: 0.4.3
+    version: 0.4.4
     entrypoint: skills/second-brain-init/scripts/engine.py
     params:
       default_mode: plan
       specification: skills/second-brain-init/assets/specification.yaml
       bridge: asset-entry.py
       ui_entrypoint: loops/second-brain-init/ui/app.py
-      ui_version: 0.6.1
+      ui_version: 0.8.3
 validation:
   policies:
   - selector: skills

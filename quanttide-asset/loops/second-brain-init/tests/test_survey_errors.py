@@ -38,4 +38,27 @@ class RulesErrors(unittest.TestCase):
             self.assertEqual('unknown',survey.get('test')['status'])
             self.assertEqual(3,request.call_count)
 
+    def test_inspection_documents_are_read_at_observed_root_commit(self):
+        repository={'status':'ok','data':{'default_branch':'main'}}
+        commit={'status':'ok','data':{'sha':'locked-commit'}}
+        with patch.object(survey,'get',side_effect=[repository,commit]), patch.object(survey,'text_file',return_value={'status':'ok','sha':'rule','text':''}) as text_file:
+            result=survey.inspect('example',['root'],{'repository':'rules/source','path':'rule.md','commit':'adopted'},root='root',inspection_paths=('AGENTS.md',))
+        self.assertIn('AGENTS.md',result['documents'])
+        root_reads=text_file.call_args_list[:4]
+        self.assertEqual(['README.md','domains/README.md','.gitmodules','AGENTS.md'],[call.args[2] for call in root_reads])
+        self.assertTrue(all(call.args[3]=='locked-commit' for call in root_reads))
+
+    def test_authenticated_reader_is_used_for_every_planning_read(self):
+        calls=[]
+        def reader(path):
+            calls.append(path)
+            if path=='repos/example/root':return {'status':'ok','data':{'default_branch':'main'}}
+            if '/commits/' in path:return {'status':'ok','data':{'sha':'locked'}}
+            if '/contents/' in path:return {'status':'ok','data':{'encoding':'base64','sha':'file','content':''}}
+            raise AssertionError(path)
+        result=survey.inspect('example',['root'],{'repository':'rules/source','path':'rule.md','commit':'adopted'},root='root',inspection_paths=('AGENTS.md',),get_fn=reader)
+        self.assertEqual(result['access'],'已登录的只读调查')
+        self.assertTrue(all(path.startswith('repos/') for path in calls))
+        self.assertIn('repos/example/root/contents/AGENTS.md?ref=locked',calls)
+
 if __name__=='__main__':unittest.main()

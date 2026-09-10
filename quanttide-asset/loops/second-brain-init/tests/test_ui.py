@@ -125,4 +125,27 @@ class UITests(unittest.TestCase):
         self.assertEqual(result['status'],'completed',result.get('error'))
         self.assertEqual(self.studio.request_log_errors[key]['category'],'local-file-busy')
 
+    def test_planning_failure_retries_same_record_without_plan_dependent_actions(self):
+        with patch.object(ui.e,'make_plan',side_effect=ui.e.WorkflowError('模拟规划读取中断')):
+            key=self.json('/api/plan',BASE)['id'];failed=self.wait(key)
+        self.assertEqual(failed['status'],'paused')
+        self.assertFalse(failed['has_plan'])
+        self.assertNotIn('plan',failed)
+        code,raw=self.request('/api/runs/'+key+'/connection-check',{})
+        self.assertEqual(code,400)
+        self.assertIn('尚未生成执行方案',json.loads(raw)['error'])
+        self.json('/api/runs/'+key+'/retry-plan',{})
+        retried=self.wait(key)
+        self.assertEqual(retried['status'],'review',retried)
+        self.assertTrue(retried['has_plan'])
+        self.assertEqual(retried['id'],key)
+
+    def test_no_plan_recovery_control_is_wired_in_static_ui(self):
+        html=(ROOT/'ui/static/index.html').read_text(encoding='utf-8')
+        script=(ROOT/'ui/static/app.js').read_text(encoding='utf-8')
+        self.assertIn('id="retry-plan"',html)
+        self.assertIn("'/retry-plan'",script)
+        self.assertIn("$('#retry-plan').hidden=v.has_plan",script)
+        self.assertIn("if(!v.has_plan)$('#connection-check').disabled=true",script)
+
 if __name__=='__main__':unittest.main()

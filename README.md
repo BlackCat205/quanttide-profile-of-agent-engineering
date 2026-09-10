@@ -5,9 +5,9 @@
 
 ## 第二大脑创建工具（本地测试通过版）
 
-直接下载：[完整试用版 ZIP](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.2.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
+直接下载：[完整试用版 ZIP](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.3.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
 
-本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.2 修复 Windows 临时文件占用导致请求日志中断主流程的问题；所有创建步骤已完成的任务可直接重新检查。真实 Windows 最终报告及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
+本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.3 允许规划失败的任务在同一记录重新生成方案，并按已锁定提交读取已有总入口的必要文件，不再为规划完整克隆仓库。真实 Windows 最终报告及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
 
 ## 目录结构
 

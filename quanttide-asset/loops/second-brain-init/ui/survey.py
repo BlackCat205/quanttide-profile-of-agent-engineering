@@ -46,33 +46,34 @@ def get(path):
             time.sleep(0.3 * (attempt + 1))
     return result
 
-def text_file(owner,repo,path,ref=None):
-    result=get('repos/'+owner+'/'+repo+'/contents/'+path+('?ref='+quote(ref,safe='') if ref else ''))
+def text_file(owner,repo,path,ref=None,get_fn=None):
+    result=(get_fn or get)('repos/'+owner+'/'+repo+'/contents/'+path+('?ref='+quote(ref,safe='') if ref else ''))
     if result['status']!='ok':return result
     data=result['data']
     if not isinstance(data,dict) or data.get('encoding')!='base64':return {'status':'unknown','reason':'资源不是可读取的文本文件。'}
     try:return {'status':'ok','sha':data['sha'],'text':base64.b64decode(data['content'],validate=False).decode('utf-8')}
     except (KeyError,ValueError,UnicodeError):return {'status':'unknown','reason':'文件内容无法解码。'}
 
-def inspect(organization,names,source,root='quanttide'):
-    report={'started_at':now(),'organization':organization,'access':'仅公开、未登录的只读调查','scope':'总入口 '+root+' 与本次目标仓库；不是组织全部仓库或持续监控。','repositories':[],'documents':{},'rules':{'adopted':source}}
+def inspect(organization,names,source,root='quanttide',inspection_paths=(),get_fn=None):
+    get_fn=get_fn or get
+    report={'started_at':now(),'organization':organization,'access':'已登录的只读调查' if get_fn is not get else '仅公开、未登录的只读调查','scope':'总入口 '+root+' 与本次目标仓库；不是组织全部仓库或持续监控。','repositories':[],'documents':{},'rules':{'adopted':source}}
     for name in names:
         row={'name':name,'url':'https://github.com/'+organization+'/'+name,'checked_at':now()}
-        info=get('repos/'+organization+'/'+name)
+        info=get_fn('repos/'+organization+'/'+name)
         if info['status']!='ok':row.update(status='unknown',reason=info['reason'],http_status=info.get('http_status'))
         else:
             data=info['data'];row.update(status='exists',default_branch=data['default_branch'],action='已找到总入口，当前仅查看，未修改' if name==root else '冲突：已有仓库，网页新建不会复用')
-            head=get('repos/'+organization+'/'+name+'/commits/'+quote(data['default_branch'],safe=''))
+            head=get_fn('repos/'+organization+'/'+name+'/commits/'+quote(data['default_branch'],safe=''))
             if head['status']=='ok':row['commit']=head['data']['sha']
             else:row.update(version_status='unknown',reason=head['reason'])
         report['repositories'].append(row)
     root_row=next((r for r in report['repositories'] if r['name']==root),{})
     if root_row.get('commit'):
-        for path in ('README.md','domains/README.md','.gitmodules'):
-            report['documents'][path]=text_file(organization,root,path,root_row['commit'])
+        for path in dict.fromkeys(('README.md','domains/README.md','.gitmodules',*inspection_paths)):
+            report['documents'][path]=text_file(organization,root,path,root_row['commit'],get_fn)
     owner,repo=source['repository'].split('/')
-    adopted=text_file(owner,repo,source['path'],source['commit'])
-    latest=text_file(owner,repo,source['path'])
+    adopted=text_file(owner,repo,source['path'],source['commit'],get_fn)
+    latest=text_file(owner,repo,source['path'],get_fn=get_fn)
     report['rules'].update(adopted_file=adopted,latest_file=latest,status=('same' if adopted['sha']==latest['sha'] else 'changed') if adopted['status']==latest['status']=='ok' else 'unknown')
     report['finished_at']=now()
     report['note']='时间戳表示这次观察的时间；各请求不是原子快照。404 与失败不代表名称可用，创建仍需独立方案及执行前复核。'

@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.2'
+VERSION='0.8.3'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -45,6 +45,16 @@ def read(path, default=None):
 
 def cleaned_error(exc):
     return str(exc)[:1500] or '操作中断，请保留记录后检查。'
+
+def authenticated_github_get(path):
+    """Return survey-compatible data through the already authenticated CLI."""
+    result=e.command(['gh','api',path],check=False)
+    if result.returncode==0:
+        try:return {'status':'ok','data':json.loads(result.stdout)}
+        except (TypeError,ValueError):return {'status':'unknown','reason':'GitHub 返回了无法识别的数据。'}
+    match=re.search(r'HTTP\s+(\d+)',result.stderr,re.I);status=int(match.group(1)) if match else None
+    reason={404:'未发现资源，可能不存在或当前账号不可见，不能证明名称可用。',403:'访问被拒绝或请求限流，不能判定资源不存在。',401:'GitHub 登录已失效。',429:'请求限流，请稍后重新调查。'}.get(status,'GitHub 连接、登录或服务请求失败。')
+    return {'status':'unknown','http_status':status,'reason':reason}
 
 def readable_report(report):
     if not report:return report
@@ -162,6 +172,36 @@ class Studio:
                 with self.guard:self.active.discard(key)
         threading.Thread(target=worker,daemon=True).start()
 
+    def planning_task(self,folder,provider,org,root,mode):
+        cfg=e.read_yaml(folder/'request.yaml');domain=cfg['domain'];work=self.storage/'workspaces'/folder.name
+        observation=None;inspection_seed=None
+        if provider=='github':
+            specification=e.read_yaml(e.SPEC);mapping=e.asset_map(domain,specification)
+            self.set_meta(folder,phase='正在按已锁定版本读取目标仓库与章程，尚未写入 GitHub。')
+            observation=survey.inspect(org,[root,'quanttide-'+domain['short_name']]+[mapping[k]['repo'] for k in specification['initial_assets']],specification['sources']['bylaw'],root=root,inspection_paths=e.INSPECTION_FILES,get_fn=authenticated_github_get)
+            e.save(folder/'survey.json',observation)
+            e.require(observation['rules']['status']=='same',survey.rules_error(observation['rules']))
+            for row in observation['repositories']:
+                if row['name']==root and mode=='existing':e.require(bool(row.get('commit')),'未找到可读取的总入口；第一次请选“新建测试入口”，已有入口请检查名称与权限。')
+                elif row['status']=='exists':raise e.WorkflowError('新建目标 '+row['name']+' 已存在；请改名或单独调查维护。')
+                else:e.require(row.get('http_status')==404,'目标查询失败，不能当作可新建：'+row['name'])
+            root_row=next(r for r in observation['repositories'] if r['name']==root)
+            if root_row.get('commit'):
+                files={}
+                for path in e.INSPECTION_FILES:
+                    document=observation['documents'].get(path,{})
+                    if document.get('status')=='ok':files[path]=document['text']
+                    elif document.get('http_status')==404:files[path]=''
+                    else:raise e.WorkflowError('无法读取已有总入口在已锁定版本中的 '+path+'；'+document.get('reason','请检查 GitHub 连接后重试。'))
+                inspection_seed={root:{'commit':root_row['commit'],'files':files}}
+        self.set_meta(folder,phase='正在核对账号、已有规则和仓库版本，生成待确认清单。')
+        e.make_plan(folder/'request.yaml',work,folder,provider,org,inspection_seed=inspection_seed)
+        planned=e.load_plan(folder)
+        if provider=='github':
+            root_row=next(r for r in observation['repositories'] if r['name']==root)
+            e.require(root_row.get('commit')==planned['before'][root]['remote'],'调查期间总入口已变化，请重新规划。')
+        self.set_meta(folder,status='review',error=None,phase=None)
+
     def create(self,payload):
         provider=payload.get('provider','local')
         e.require(provider in ('local','github'),'请选择本地或 GitHub。')
@@ -188,25 +228,19 @@ class Studio:
         work=self.storage/'workspaces'/key
         (folder/'request.yaml').write_text(yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False),encoding='utf-8')
         self.set_meta(folder,id=key,title=domain['chinese_name'],provider=provider,organization=org,root_repo=root,root_mode=mode,status='planning',created_at=e.now(),error=None)
-        def task():
-            if provider=='github':
-                specification=e.read_yaml(e.SPEC);mapping=e.asset_map(domain,specification)
-                self.set_meta(folder,phase='正在读取目标仓库与章程，尚未写入 GitHub。')
-                observation=survey.inspect(org,[root,'quanttide-'+domain['short_name']]+[mapping[k]['repo'] for k in specification['initial_assets']],specification['sources']['bylaw'],root=root)
-                e.save(folder/'survey.json',observation)
-                e.require(observation['rules']['status']=='same',survey.rules_error(observation['rules']))
-                for row in observation['repositories']:
-                    if row['name']==root and mode=='existing':e.require(bool(row.get('commit')),'未找到可读取的总入口；第一次请选“新建测试入口”，已有入口请检查名称与权限。')
-                    elif row['status']=='exists':raise e.WorkflowError('新建目标 '+row['name']+' 已存在；请改名或单独调查维护。')
-                    else:e.require(row.get('http_status')==404,'目标查询失败，不能当作可新建：'+row['name'])
-            self.set_meta(folder,phase='正在核对账号、已有规则和仓库版本，生成待确认清单。')
-            e.make_plan(folder/'request.yaml',work,folder,provider,org)
-            planned=e.load_plan(folder)
-            if provider=='github':
-                root_row=next(r for r in observation['repositories'] if r['name']==root)
-                e.require(root_row.get('commit')==planned['before'][root]['remote'],'调查期间总入口已变化，请重新规划。')
-            self.set_meta(folder,status='review')
-        self.spawn(folder,task)
+        self.spawn(folder,lambda:self.planning_task(folder,provider,org,root,mode))
+        return {'id':key}
+
+    def retry_plan(self,key):
+        folder=self.folder(key)
+        with self.guard:
+            meta=read(folder/'ui.json',{})
+            e.require(key not in self.active,'正在处理中，请勿重复点击。')
+            e.require(meta.get('status')=='paused','只有尚未生成方案的暂停任务可以重试。')
+            e.require(not (folder/'execution-plan.json').exists(),'这份任务已有执行方案，请使用对应的继续或核验操作。')
+            e.require((folder/'request.yaml').is_file(),'这份旧记录缺少需求配置，请返回填写后重新生成。')
+            self.set_meta(folder,status='planning',error=None,phase='正在重新读取目标仓库和规则；尚未创建或推送仓库。')
+            self.spawn(folder,lambda:self.planning_task(folder,meta['provider'],meta['organization'],meta['root_repo'],meta['root_mode']))
         return {'id':key}
 
     def execute(self,key,payload,resume=False):
@@ -280,6 +314,7 @@ class Studio:
         with self.guard:
             meta=read(folder/'ui.json');e.require(meta['status'] in ('completed','paused'),'当前不能重新检查。')
             e.require(key not in self.active,'正在处理中。')
+            e.require((folder/'execution-plan.json').is_file(),'此记录尚未生成执行方案；请点击“重新生成方案”。')
             self.set_meta(folder,status='verifying',error=None)
             def task():
                 plan=e.load_plan(folder,readonly=True);r=e.verify(plan,read(folder/'approval-record.json'))
@@ -356,6 +391,7 @@ class Studio:
         folder=self.folder(key)
         with self.guard:
             e.require(not self.active,'请等待当前操作完成。')
+            e.require((folder/'execution-plan.json').is_file(),'此记录尚未生成执行方案；请点击“重新生成方案”，不需要检查下载连接。')
             plan=e.load_plan(folder,readonly=True)
             e.require(plan['provider']=='github','仅 GitHub 任务需要连接检测。')
             previous=read(folder/'ui.json')['status']
@@ -457,7 +493,7 @@ class Studio:
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{})
         compatible=bool(plan and e.engine_compatible(plan))
-        result=dict(meta,first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        result=dict(meta,has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))
@@ -566,10 +602,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/github/cancel':return self.send(200,studio.login.cancel())
             if path=='/api/plan':return self.send(200,studio.create(payload))
             if path=='/api/survey':return self.send(200,studio.start_survey(payload))
-            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply|connection-check)',path)
+            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|retry-plan|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply|connection-check)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')
             elif action=='verify':data=studio.verify(key)
+            elif action=='retry-plan':data=studio.retry_plan(key)
             elif action=='connection-check':data=studio.connection_task(key)
             elif action in ('partial-preview','partial-apply'):data=studio.partial_task(key,payload,action=='partial-apply')
             elif action in ('repair-preview','repair-apply'):data=studio.repair_task(key,payload,action=='repair-apply')

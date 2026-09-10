@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.3'
+VERSION = '0.4.4'
 COMPATIBLE_ENGINE_SHA256S = {
     # 0.4.1: execution operations and generated content are unchanged. 0.4.2
     # replaces redundant Git read probes with authenticated GitHub API reads
@@ -29,12 +29,23 @@ COMPATIBLE_ENGINE_SHA256S = {
     # 0.4.2: same execution contract; 0.4.3 hardens local record writes and
     # makes optional progress/request observers non-blocking.
     '3269648a78a0547c79390a3ef18662fcd079434c878fccdcab0bf1a56b36e6ad',
+    # 0.4.3: same execution contract; 0.4.4 allows the UI to provide
+    # commit-pinned, read-only inspection documents without cloning a repo.
+    'fbab336544acde82fbbbc1674a98ffca265859efb52af35ada28c6285ddab378',
 }
 verification_observer = threading.local()
 request_observer = threading.local()
 SKILL = Path(__file__).resolve().parents[1]
 SPEC = SKILL / 'assets' / 'specification.yaml'
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+INSPECTION_FILES = (
+    'README.md',
+    'AGENTS.md',
+    '.gitmodules',
+    '.quanttide/agent/contract.yaml',
+    '.quanttide/docs/contract.yaml',
+    '.quanttide/asset/contract.yaml',
+)
 CC = 'Creative Commons Attribution 4.0 International (CC BY 4.0)\n\nThis work is licensed under CC BY 4.0.\nhttps://creativecommons.org/licenses/by/4.0/legalcode\n'
 APACHE = 'Apache License, Version 2.0\n\nLicensed under the Apache License, Version 2.0 (the "License");\nyou may not use this work except in compliance with the License.\nYou may obtain a copy of the License at\n\n    https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an "AS IS" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n'
 
@@ -411,7 +422,7 @@ def validate_config(cfg, spec):
     return cfg
 
 
-def make_plan(config, workspace, run_dir, provider_kind='local', organization='quanttide'):
+def make_plan(config, workspace, run_dir, provider_kind='local', organization='quanttide', inspection_seed=None):
     spec = read_yaml(SPEC)
     cfg = validate_config(read_yaml(config), spec)
     work, run = Path(workspace).resolve(), Path(run_dir).resolve()
@@ -504,11 +515,22 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
             require(not op.get('require_new') or not initial[op['repo']]['remote_exists'], f'新建目标 {op["repo"]} 已存在；请改名或单独调查维护，不能自动复用。')
         if op['kind'] == 'rename-repo':
             require(not initial[op['new_name']]['remote'] and not initial[op['new_name']]['local'], '更名目标已经存在。')
-    # Read-only materialization of remote README/rules for review is a clone into run_dir, not the target workspace.
+    # The UI may supply documents read from the exact observed commit. The CLI
+    # keeps the clone fallback so direct usage remains backwards compatible.
     inspection = {}
+    inspection_seed = inspection_seed or {}
     for name in sorted(names):
         state = initial[name]
         if not state['remote']:
+            continue
+        seeded = inspection_seed.get(name)
+        if seeded is not None:
+            require(seeded.get('commit')==state['remote'], '读取说明期间仓库版本已变化，请重新生成方案。')
+            files=seeded.get('files')
+            require(isinstance(files,dict) and all(path in files and isinstance(files[path],str) for path in INSPECTION_FILES), '已有仓库的规则文件读取不完整，请重新生成方案。')
+            inspection[name] = {path:files[path] for path in INSPECTION_FILES}
+            if scenario == 'new-domain' and name == target:
+                require('second-brain-init:domain:begin' in inspection[name]['README.md'], '同名领域已存在；请使用 complete-existing 调查补全，不能按新建处理。')
             continue
         src = provider.repo(name)
         if not src.exists():
@@ -516,7 +538,7 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
             src.parent.mkdir(parents=True, exist_ok=True)
             command(['git','clone','--depth','1',provider.remote(name),src])
         require(git(src,'rev-parse','HEAD').stdout.strip()==state['remote'], '读取说明期间仓库版本已变化，请重新生成方案。')
-        inspection[name] = {p: text_at(src,p) for p in ['README.md','AGENTS.md','.gitmodules','.quanttide/agent/contract.yaml','.quanttide/docs/contract.yaml','.quanttide/asset/contract.yaml']}
+        inspection[name] = {p: text_at(src,p) for p in INSPECTION_FILES}
         if scenario == 'new-domain' and name == target:
             require('second-brain-init:domain:begin' in inspection[name]['README.md'], '同名领域已存在；请使用 complete-existing 调查补全，不能按新建处理。')
     plan = dict(schema_version=2, plugin='second-brain-init', version=VERSION, created_at=now(), scenario=scenario,

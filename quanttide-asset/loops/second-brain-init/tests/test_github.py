@@ -83,7 +83,7 @@ class GithubUnitTests(unittest.TestCase):
 
 class LocalGithubTransport:
     def __init__(self,path):
-        self.path=path;self.owner='BlackCat205';self.mutations=[];self.real=e.command
+        self.path=path;self.owner='BlackCat205';self.mutations=[];self.clones=[];self.real=e.command
     def command(self,args,cwd=None,check=True):
         args=list(map(str,args))
         if args[0]=='gh':
@@ -110,16 +110,24 @@ class LocalGithubTransport:
                 else:raise AssertionError(args)
                 return subprocess.CompletedProcess(args,0,json.dumps(data),'')
         if args[0]=='git':
+            if 'clone' in args:self.clones.append(args[-1])
             args=[x.replace('protocol.file.allow=never','protocol.file.allow=always') for x in args]
             args[1:1]=['-c','url.'+self.path.as_uri()+'/.insteadOf=https://github.com/'+self.owner+'/', '-c','protocol.file.allow=always']
         return self.real(args,cwd,check)
-    def survey(self,owner,names,source,root='quanttide'):
+    def survey(self,owner,names,source,root='quanttide',inspection_paths=(),get_fn=None):
         rows=[]
         for name in names:
             remote=self.path/(name+'.git');commit=None
             if remote.exists():commit=self.real(['git','--git-dir',remote,'rev-parse','HEAD']).stdout.strip()
             rows.append({'name':name,'status':'exists' if remote.exists() else 'unknown','commit':commit,'http_status':200 if remote.exists() else 404})
-        return {'rules':{'status':'same','adopted_file':{'sha':'fixture-rules'}},'repositories':rows,'documents':{},'scope':'SIMULATED GITHUB TRANSPORT','started_at':e.now(),'finished_at':e.now()}
+        documents={}
+        root_row=next((row for row in rows if row['name']==root),{})
+        if root_row.get('commit'):
+            remote=self.path/(root+'.git')
+            for path in dict.fromkeys(('README.md','domains/README.md','.gitmodules',*inspection_paths)):
+                found=self.real(['git','--git-dir',remote,'show',root_row['commit']+':'+path],check=False)
+                documents[path]={'status':'ok','sha':'fixture-'+path,'text':found.stdout} if found.returncode==0 else {'status':'unknown','http_status':404,'reason':'fixture missing'}
+        return {'rules':{'status':'same','adopted_file':{'sha':'fixture-rules'}},'repositories':rows,'documents':documents,'scope':'SIMULATED GITHUB TRANSPORT','started_at':e.now(),'finished_at':e.now()}
 
 class GithubWorkflowTests(unittest.TestCase):
     def wait(self,studio,key):
@@ -136,8 +144,10 @@ class GithubWorkflowTests(unittest.TestCase):
             with patch.object(e,'command',side_effect=transport.command),patch.object(e.shutil,'which',side_effect=lambda name: '/fake/gh' if name=='gh' else real_which(name)),patch.object(ui.survey,'inspect',side_effect=transport.survey),patch.object(ui.survey,'text_file',return_value={'status':'ok','sha':'fixture-rules'}):
                 for short,mode in [('firsttrial','new'),('secondtrial','existing')]:
                     payload=dict(BASE,short_name=short,english_name=short+'-engineering',provider='github',organization='BlackCat205',root_repo='second-brain-test',root_mode=mode)
+                    clones_before_plan=len(transport.clones)
                     key=studio.create(payload)['id'];view=self.wait(studio,key)
                     self.assertEqual(view['status'],'review',view.get('error'));self.assertEqual(view['completed'],0)
+                    self.assertEqual(len(transport.clones),clones_before_plan,'UI planning must not clone an existing root')
                     if mode=='new':self.assertFalse(transport.mutations)
                     studio.execute(key,{'plan_id':view['plan']['id'],'confirmed':True,'reviewer':'自动测试：GitHub 接口模拟','github_confirmation':'BlackCat205'})
                     view=self.wait(studio,key);self.assertEqual(view['status'],'completed',(view.get('error'),view.get('report')));self.assertTrue(view['report']['technical_passed'])

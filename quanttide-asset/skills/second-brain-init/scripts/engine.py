@@ -20,8 +20,10 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.5'
+VERSION = '0.4.6'
 COMPATIBLE_ENGINE_SHA256S = {
+    # 0.4.5: same approved content; only transport reconciliation changes.
+    '638d45a0d91059dfacf687ec478e030cb2590a607233d82dbcffed3de0a984cc',
     # 0.4.1: execution operations and generated content are unchanged. 0.4.2
     # replaces redundant Git read probes with authenticated GitHub API reads
     # and adds exact local-phase reconciliation for interrupted runs.
@@ -219,6 +221,23 @@ def command(argv, cwd=None, check=True):
 def git(path, *args, check=True):
     return command(['git', '-c', 'core.autocrlf=false', *args], cwd=path, check=check)
 
+def clone_isolated(remote, downloads, shallow=False):
+    """Bounded downloads into fresh directories shared by execution and diagnostics."""
+    downloads=Path(downloads);downloads.mkdir(parents=True,exist_ok=True)
+    for attempt in range(3):
+        folder=Path(tempfile.mkdtemp(prefix='repository-clone-',dir=downloads))
+        candidate=folder/'repository'
+        try:
+            if attempt:request_observer.http1=True
+            command(['git','clone',*(['--depth','1'] if shallow else []),remote,candidate])
+            return candidate
+        except WorkflowError as exc:
+            if '连接中断或超时' not in str(exc):raise
+            if attempt==2:
+                raise WorkflowError('下载连接中断或超时；隔离目录下载已尝试 3 次，目标工作目录未覆盖。可稍后核对并继续。') from exc
+            time.sleep(.3*(attempt+1))
+
+
 def text_at(repo, name):
     path = safe_path(repo, name)
     return path.read_text(encoding='utf-8') if path.is_file() else ''
@@ -315,17 +334,8 @@ class Provider:
             # Clone in an isolated attempt directory; never overwrite/delete remnants.
             downloads = path.parent.parent/'downloads'
             downloads.mkdir(parents=True,exist_ok=True)
-            candidate=None;attempt=None
-            for clone_attempt in range(3):
-                attempt = Path(tempfile.mkdtemp(prefix=name+'-clone-', dir=downloads))
-                candidate = attempt/'repository'
-                try:
-                    if clone_attempt:request_observer.http1=True
-                    command(['git', 'clone', self.remote(name), candidate])
-                    break
-                except WorkflowError as exc:
-                    if '连接中断或超时' not in str(exc) or clone_attempt==2:raise
-                    time.sleep(.3*(clone_attempt+1))
+            candidate=clone_isolated(self.remote(name),downloads)
+            attempt=candidate.parent
             require(not path.exists(), '下载期间目标目录出现，保留下载结果并停止。')
             candidate.rename(path)
             attempt.rmdir()
@@ -345,6 +355,57 @@ class Provider:
             git(path, 'commit', '-m', 'feat(asset): 初始化仓库')
             git(path, 'push', '-u', 'origin', 'HEAD:main')
             if getattr(self,'phase',None):self.phase(name,'initialized')
+
+    def push_verified(self, name, branch):
+        """Reconcile every uncertain push before a bounded retry of the same commit.
+
+        Ordinary non-force push preserves Git's concurrent update protection.
+        Identity, branch, origin, clean tree and the immutable local commit must
+        remain unchanged. A failed read never licenses another write.
+        """
+        repo=self.repo(name)
+        head=git(repo,'rev-parse','HEAD').stdout.strip()
+        identity=self.info(name)
+        require(identity['exists'] and identity['branch']==branch,'目标分支或仓库已变化，停止推送。')
+        if self.kind=='github':
+            require(identity.get('can_push') and not identity.get('archived'),'认证或权限受限：当前账号不能推送目标仓库。')
+        baseline=self.head(name,identity)
+        if baseline!=head and baseline:
+            require(git(repo,'merge-base','--is-ancestor',baseline,head,check=False).returncode==0,
+                    '远端提交已变化或缺少共同历史，不能安全推送；请维护者核对。')
+        last_error=None
+        for attempt in range(3):
+            current=self.info(name)
+            require(all(current.get(k)==identity.get(k) for k in ('exists','id','owner_id','branch','archived','can_push')),
+                    '仓库身份、分支或权限已变化，停止推送。')
+            require(git(repo,'remote','get-url','--push','--all','origin').stdout.strip()==self.remote(name),
+                    '推送目标已变化，停止推送。')
+            require(git(repo,'rev-parse','HEAD').stdout.strip()==head and
+                    git(repo,'symbolic-ref','--short','HEAD').stdout.strip()==branch and
+                    not git(repo,'status','--porcelain').stdout,'本机提交或文件内容已变化，停止推送。')
+            remote=self.head(name,current)
+            if remote==head:return
+            require(remote==baseline,'远端提交已变化，停止重试；请维护者核对。')
+            if attempt:request_observer.http1=True
+            try:
+                # Pin the source SHA even if an external process moves local HEAD.
+                git(repo,'push','origin',head+':refs/heads/'+branch)
+            except WorkflowError as exc:
+                if '连接中断或超时' not in str(exc):raise
+                last_error=exc
+            else:
+                last_error=None
+            # Verify even after an error: the server may have received the push.
+            observed=self.info(name)
+            require(all(observed.get(k)==identity.get(k) for k in ('exists','id','owner_id','branch')),
+                    '推送后仓库身份或分支已变化，请核对。')
+            remote=self.head(name,observed)
+            if remote==head:return
+            require(remote==baseline,'远端提交已变化，停止重试；请维护者核对。')
+            if last_error is None:
+                raise RemoteReadError('推送返回成功，但远端提交尚未确认；请重新核对，保留本机提交。')
+            if attempt<2:time.sleep(.3*(attempt+1))
+        raise WorkflowError(f'{self.organization}/{name} · 推送连接中断或超时；已核对远端并尝试 3 次，仍未确认收到本机提交。进度已保存，可稍后核对并继续。') from last_error
 
     def rename(self, old, new):
         old_path, new_path = self.repo(old), self.repo(new)
@@ -884,8 +945,7 @@ class Executor:
                     if getattr(provider, 'phase', None): provider.phase(repo.name, 'committed')
             branch = git(repo,'symbolic-ref','--short','HEAD').stdout.strip()
             require(not git(repo,'status','--porcelain').stdout, '提交后仍有遗漏文件，请保留任务并检查。')
-            if provider.head(repo.name) != git(repo,'rev-parse','HEAD').stdout.strip():
-                git(repo,'push','origin','HEAD:refs/heads/'+branch)
+            provider.push_verified(repo.name,branch)
             if getattr(provider, 'phase', None): provider.phase(repo.name, 'pushed')
         elif kind == 'rename-repo':
             provider.rename(op['repo'],op['new_name'])

@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.4'
+VERSION='0.8.5'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -74,9 +74,15 @@ def readable_report(report):
             if row['key']=='mounts' and mounts and all(x['status']=='unknown' for x in mounts):row['status']='unknown'
     return result
 
+def current_failure(meta,log):
+    value=meta.get('error')
+    if value and not value.startswith('连接检测完成'):return value
+    return log.get('error')
+
+
 def recovery_guidance(folder,meta,plan,log,requests):
     if meta.get('status')!='paused':return None
-    failed=next((row for row in reversed(requests) if row.get('status') in ('failed','unknown')),None)
+    failed=next((row for row in reversed(requests) if row.get('status') in ('failed','unknown') and not (row.get('stage') or '').startswith('connection-check:')),None)
     evidence=[];current=log.get('current') or log.get('intent') or {}
     if current.get('repo'):evidence.append('暂停位置：'+current['repo']+' · '+current.get('kind','当前步骤'))
     if failed:evidence.append('最近失败通道：'+failed.get('tool','外部服务')+' '+failed.get('operation','请求')+' · '+failed.get('category','未分类'))
@@ -90,6 +96,16 @@ def recovery_guidance(folder,meta,plan,log,requests):
     if read(folder/'repair-plan.json') or read(folder/'repair-check.json'):
         return {'code':'repair-review','title':'需要核对独立修复方案','summary':'创建记录已保留；只允许页面列出的窄范围修复。','protected':'不会重建仓库或改写原执行记录。','action':'repair','action_label':'查看修复方案','evidence':evidence,
                 'steps':['阅读页面列出的目标仓库和唯一文件。','确认内容后执行窄范围修复。','程序重新核验，不修改原执行记录。']}
+    reason=current_failure(meta,log) or ''
+    if any(word in reason for word in ('锁','已变化','范围外','额外文件','未归属','共同历史','认证或权限受限','登录已失效','请先登录','执行器版本','配置规格')):
+        guidance=manual_guidance({'error':reason},{},evidence)
+        fixable=any(word in reason for word in ('锁','认证或权限受限','登录已失效','请先登录'))
+        if compatible and fixable:
+            guidance.update(code='resolve-then-check',title='先处理页面列出的原因，再核对恢复',
+                summary='处理账号权限或确认其他任务已退出后，程序仍会重新核对现场；不会跳过检查。',
+                action='resume' if completed<total else 'verify',
+                action_label='处理后核对并继续' if completed<total else '处理后重新核验')
+        return guidance
     if compatible and completed<total:
         connection=failed and failed.get('category')=='connection'
         return {'code':'resume-safe-check','title':f'已保存 {completed}/{total} 项，可从下一项核对恢复','summary':('网络数据通道中断；' if connection else '当前步骤未完成；')+'程序会先核对仓库身份、提交和工作流文件，再决定是否继续。','protected':'已完成项不会重做；推送结果不明时先查远端，不会盲目重复推送。','action':'resume','action_label':'自动核对并继续','evidence':evidence,
@@ -100,13 +116,18 @@ def recovery_guidance(folder,meta,plan,log,requests):
     if log.get('current',{}).get('kind')=='ensure-repo':
         return {'code':'legacy-review','title':'旧版建仓中断，需要先核对接续凭证','summary':'页面会检查仓库 ID、提交和初始文件，再由你确认是否接续。','protected':'原计划、原确认和仓库均不改写。','action':'partial','action_label':'检查接续方案','evidence':evidence,
                 'steps':['点击“检查接续方案”。','核对页面展示的仓库 ID、提交和初始 README。','确认后生成兼容当前执行器的新恢复任务。']}
+    return manual_guidance(meta,log,evidence)
+
+def manual_guidance(meta,log,evidence):
     reason=' '.join(filter(None,(meta.get('error'),log.get('error'))))
     if '锁' in reason:
         steps=['关闭其他仍在运行的本工具窗口或启动器。','重新打开本工具并回到这条记录。','确认没有任务正在执行后再尝试；锁仍存在时把页面显示的保存位置交给维护者检查。']
-    elif any(word in reason for word in ('范围外','文件内容已变化','仓库已变化','状态已变化')):
+    elif any(word in reason for word in ('范围外','文件内容已变化','仓库已变化','状态已变化','提交已变化','身份已变化','分支已变化','目标已变化','共同历史','额外文件','未归属')):
         steps=['不要删除或覆盖提示中的本机文件。','请仓库维护者判断这些修改应提交、移走还是保留。','处理后重新调查并生成新方案；原任务继续作为审计记录保留。']
     elif any(word in reason for word in ('执行器版本','配置规格','计划内容已变化')):
         steps=['保留这条旧记录，不手工修改 JSON。','使用当前版本重新填写并生成方案。','新方案会重新读取现状，只规划尚未完成的合规动作。']
+    elif '认证或权限' in reason or '登录' in reason:
+        steps=['在页面检查 GitHub 登录账号。','确认该账号具有目标仓库写入权限，再核对并继续。','检测连接通过只证明相应读取可用，不代表有写入权限。']
     else:
         steps=['先阅读上方暂停位置与错误原文。','不要手工删除仓库或反复执行 Git 命令。','只有程序无法给出安全自动操作时，才导出诊断包给维护者。']
     return {'code':'manual-review','title':'检测到版本或现场超出自动恢复边界','summary':'为避免覆盖他人文件或错误仓库，程序不会自动处理。','protected':'已有仓库、文件和日志保持原状。','action':'diagnostics','action_label':'导出诊断包','evidence':evidence,'steps':steps}
@@ -201,7 +222,8 @@ class Studio:
                 e.request_observer.callback=request_event
                 survey.observer.callback=request_event
                 e.request_observer.stage='preflight'
-                e.request_observer.http1=False
+                history=read(folder/'requests.json',[])
+                e.request_observer.http1=any(row.get('tool')=='git' and row.get('target') and (row.get('protocol')=='HTTP/1.1' or row.get('category')=='connection') for row in history)
                 e.verification_observer.callback=lambda progress:e.save(folder/'verification-progress.json',progress)
                 fn()
             except Exception as exc:self.set_meta(folder,status='paused',error=cleaned_error(exc))
@@ -434,7 +456,9 @@ class Studio:
             e.require((folder/'execution-plan.json').is_file(),'此记录尚未生成执行方案；请点击“重新生成方案”，不需要检查下载连接。')
             plan=e.load_plan(folder,readonly=True)
             e.require(plan['provider']=='github','仅 GitHub 任务需要连接检测。')
-            previous=read(folder/'ui.json')['status']
+            previous_meta=read(folder/'ui.json')
+            previous=previous_meta['status']
+            previous_error=current_failure(previous_meta,read(folder/'execution-log.json',{}))
             self.set_meta(folder,status='verifying',error=None)
             def task():
                 import tempfile
@@ -452,12 +476,12 @@ class Studio:
                             if label=='远端版本':e.require(value,'未取得远端提交；无法证明目标可下载。')
                         else:
                             with tempfile.TemporaryDirectory(prefix='brain-connection-') as temp:
-                                e.command(['git','clone','--depth','1',provider.remote(name),Path(temp)/'repository'])
+                                e.clone_isolated(provider.remote(name),Path(temp),shallow=True)
                         row['status']='passed'
                     except Exception as exc:row.update(status='unknown',reason=cleaned_error(exc))
                     row['finished_at']=e.now();result['checks'].append(row);e.save(folder/'connection-check.json',result)
                 result['finished_at']=e.now();e.save(folder/'connection-check.json',result)
-                self.set_meta(folder,status=previous,error='连接检测完成，请查看三项结果；本次没有执行创建或推送。')
+                self.set_meta(folder,status=previous,error=previous_error,connection_notice='连接检测完成；本次没有执行创建或推送。')
             self.spawn(folder,task)
         return {'id':key}
 
@@ -533,7 +557,7 @@ class Studio:
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{});requests=read(folder/'requests.json',[])
         compatible=bool(plan and e.engine_compatible(plan))
-        result=dict(meta,has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        result=dict(meta,current_error=current_failure(meta,log),has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))

@@ -114,7 +114,12 @@ class LocalGithubTransport:
             if 'clone' in args:self.clones.append(args[-1])
             args=[x.replace('protocol.file.allow=never','protocol.file.allow=always') for x in args]
             args[1:1]=['-c','url.'+self.path.as_uri()+'/.insteadOf=https://github.com/'+self.owner+'/', '-c','protocol.file.allow=always']
-        return self.real(args,cwd,check)
+        result=self.real(args,cwd,check)
+        # The simulator rewrites HTTPS to local bare repos. Expose the matching
+        # logical URL when production validates the effective push destination.
+        if 'get-url' in args and result.returncode==0:
+            result.stdout=result.stdout.replace(self.path.as_uri()+'/', 'https://github.com/'+self.owner+'/')
+        return result
     def survey(self,owner,names,source,root='quanttide',inspection_paths=(),get_fn=None):
         rows=[]
         for name in names:

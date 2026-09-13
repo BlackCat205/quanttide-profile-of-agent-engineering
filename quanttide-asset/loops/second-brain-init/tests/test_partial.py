@@ -176,16 +176,16 @@ class PartialTests(unittest.TestCase):
 
     def test_legacy_rejects_unknown_engine_before_network(self):
         with patch.object(e,'check_identity') as identity:
-            with self.assertRaisesRegex(e.WorkflowError,'已知旧版'):partial_recovery.inspect(self.run)
+            with self.assertRaisesRegex(e.WorkflowError,'兼容版本'):partial_recovery.inspect(self.run)
             identity.assert_not_called()
 
     def test_migration_preserves_source_and_binds_new_approval(self):
         import hashlib
         from unittest.mock import Mock
         plan=copy.deepcopy(self.plan);plan.pop('id');plan.update(provider='github',organization='Example',
-            github_identity={'owner_id':1},engine_sha256=partial_recovery.LEGACY_ENGINE)
+            github_identity={'owner_id':1},engine_sha256=getattr(self,'migration_engine',partial_recovery.LEGACY_ENGINE))
         plan['id']=e.digest(plan);self.plan=plan;e.save(self.run/'execution-plan.json',plan)
-        before=plan['before'];log={'plan_id':plan['id'],'completed':[],'checkpoint':before,'events':[]}
+        before=plan['before'];log={'plan_id':plan['id'],'completed':[],'checkpoint':before,'events':[], 'created_receipts':{'prior':{'repository_id':9}}, 'phases':[{'repo':'prior','kind':'pushed'}]}
         e.save(self.run/'execution-log.json',log)
         e.save(self.run/'approval-record.json',{'plan_id':plan['id'],'accepted':True,'simulated':False})
         proposal={'source_plan':plan['id'],'repo':'quanttide','operation':'001','organization':'Example','repository_id':123,'commit':'abc','content':'# quanttide','before':before,'checked_at':e.now(),'engine_sha256':hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest()}
@@ -197,14 +197,30 @@ class PartialTests(unittest.TestCase):
             dest=self.run.parent/'recovered'
             result=partial_recovery.migrate(self.run,dest,proposal['id'],'reviewer')
             self.assertNotEqual(result['id'],self.plan['id'])
+            restored=e.read_json(dest/'execution-log.json')
+            self.assertEqual(restored['created_receipts']['prior'],{'repository_id':9})
+            self.assertIn({'repo':'prior','kind':'pushed'},restored['phases'])
             self.assertEqual(e.read_json(dest/'approval-record.json')['plan_id'],result['id'])
             self.assertEqual((self.run/'execution-plan.json').read_bytes(),original)
             with self.assertRaisesRegex(e.WorkflowError,'已生成'):partial_recovery.migrate(self.run,self.run.parent/'duplicate',proposal['id'],'reviewer')
 
-    def test_legacy_inspection_rejects_extra_remote_commit(self):
+    def test_current_version_can_migrate_without_losing_previous_receipts(self):
+        self.migration_engine=e.engine_sha256()
+        self.test_migration_preserves_source_and_binds_new_approval()
+
+    def test_missing_receipt_routes_to_review_not_endless_resume(self):
+        plan=copy.deepcopy(self.plan);plan.update(provider='github')
+        log={'completed':[],'checkpoint':plan['before'],'current':{'op':'001','kind':'ensure-repo','repo':'quanttide'}}
+        result=ui.recovery_guidance(self.run,{'status':'paused','error':'下一步涉及的仓库状态已变化'},plan,log,[])
+        self.assertEqual(result['action'],'partial')
+        self.assertTrue(partial_recovery.eligible(plan,log))
+        log['created_receipts']={'quanttide':{'repository_id':1}}
+        self.assertFalse(partial_recovery.eligible(plan,log))
+
+    def test_current_inspection_rejects_extra_remote_commit(self):
         from unittest.mock import Mock
         import base64,json,subprocess
-        plan=copy.deepcopy(self.plan);plan.update(provider='github',engine_sha256=partial_recovery.LEGACY_ENGINE,github_identity={'owner_id':1})
+        plan=copy.deepcopy(self.plan);plan.update(provider='github',engine_sha256=e.engine_sha256(),github_identity={'owner_id':1})
         log={'plan_id':plan['id'],'completed':[],'checkpoint':plan['before'],'current':{'op':'001'}}
         e.save(self.run/'execution-log.json',log)
         e.save(self.run/'approval-record.json',{'plan_id':plan['id'],'accepted':True,'simulated':False})

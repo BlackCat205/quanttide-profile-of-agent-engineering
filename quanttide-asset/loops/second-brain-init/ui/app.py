@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.5'
+VERSION='0.8.6'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -97,6 +97,12 @@ def recovery_guidance(folder,meta,plan,log,requests):
         return {'code':'repair-review','title':'需要核对独立修复方案','summary':'创建记录已保留；只允许页面列出的窄范围修复。','protected':'不会重建仓库或改写原执行记录。','action':'repair','action_label':'查看修复方案','evidence':evidence,
                 'steps':['阅读页面列出的目标仓库和唯一文件。','确认内容后执行窄范围修复。','程序重新核验，不修改原执行记录。']}
     reason=current_failure(meta,log) or ''
+    if partial_recovery.eligible(plan,log) and ('状态已变化' in reason or '仓库已变化' in reason or read(folder/'partial-proposal.json')):
+        return {'code':'unreceipted-create','title':'仓库已出现，但本任务没有收到建仓确认',
+                'summary':'先只读核对仓库身份、权限、初始提交及 README。符合初始骨架才允许你确认接续。',
+                'protected':'不重建仓库、不覆盖文件；已有完成记录保留，同名本身不能证明创建归属。',
+                'action':'partial','action_label':'检查接续方案','evidence':evidence,
+                'steps':['点击“检查接续方案”，程序只读取初始仓库。','核对目标账号、仓库、README 和提交，再勾选允许接续。','打开生成的恢复任务，点击“自动核对并继续”；已完成项保持完成。']}
     if any(word in reason for word in ('锁','已变化','范围外','额外文件','未归属','共同历史','认证或权限受限','登录已失效','请先登录','执行器版本','配置规格')):
         guidance=manual_guidance({'error':reason},{},evidence)
         fixable=any(word in reason for word in ('锁','认证或权限受限','登录已失效','请先登录'))
@@ -557,7 +563,7 @@ class Studio:
     def view(self,key):
         folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{});requests=read(folder/'requests.json',[])
         compatible=bool(plan and e.engine_compatible(plan))
-        result=dict(meta,current_error=current_failure(meta,log),has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=bool(plan and not compatible and log.get('current',{}).get('kind')=='ensure-repo'),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
+        result=dict(meta,current_error=current_failure(meta,log),has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=partial_recovery.eligible(plan,log),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
             root_name=plan['config']['root_repo']
             d=plan['config']['domain'];m=e.asset_map(d,e.read_yaml(e.SPEC))

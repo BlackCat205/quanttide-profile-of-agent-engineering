@@ -1,4 +1,4 @@
-"""Reviewed adoption of a legacy empty repository, into a separate execution plan."""
+"""Reviewed adoption of an unreceipted initial repository, into a separate execution plan."""
 import copy
 import json
 import base64
@@ -8,9 +8,22 @@ import engine as e
 
 LEGACY_ENGINE = 'a3f8b7e435ffc531d7d974365ea0aa3722c210cd60a10d49ff16d13cd3342cb5'
 
+def supported(plan):
+    return bool(plan and plan.get('provider')=='github' and plan.get('scenario')=='new-domain'
+                and (e.engine_compatible(plan) or plan.get('engine_sha256')==LEGACY_ENGINE))
+
+def eligible(plan,log):
+    if not supported(plan):return False
+    op=e.next_operation(plan,log)
+    if not op or op.get('kind')!='ensure-repo' or (log.get('current') or {}).get('op')!=op['id']:return False
+    before=log.get('checkpoint',{}).get(op['repo'],{})
+    return bool(before and not before.get('remote_exists') and before.get('local') is None
+                and op['repo'] not in log.get('created_receipts',{}))
+
+
 def inspect(folder):
     folder=Path(folder);plan=e.load_plan(folder,readonly=True)
-    e.require(plan['engine_sha256']==LEGACY_ENGINE and plan['provider']=='github' and plan['scenario']=='new-domain','仅支持已知旧版 GitHub 新领域中断任务。')
+    e.require(supported(plan),'仅支持兼容版本的 GitHub 新领域建仓中断任务。')
     log=e.read_json(folder/'execution-log.json');approval=e.read_json(folder/'approval-record.json')
     e.require(log['plan_id']==plan['id'] and approval['plan_id']==plan['id'] and approval.get('accepted') and not approval.get('simulated'),'原计划与人工确认不匹配。')
     op=next((x for x in plan['operations'] if x['id'] not in log['completed']),None)
@@ -52,8 +65,7 @@ def migrate(folder,destination,accepted_id,reviewer):
     folder=Path(folder);destination=Path(destination)
     old=e.load_plan(folder,readonly=True)
     with e.execution_locks(folder,old['workspace']):
-        e.require(old['engine_sha256']==LEGACY_ENGINE and old['provider']=='github'
-                  and old['scenario']=='new-domain','仅支持已知旧版 GitHub 新领域中断任务。')
+        e.require(supported(old),'仅支持兼容版本的 GitHub 新领域建仓中断任务。')
         e.require(not (folder/'partial-migration.json').exists(),'已生成恢复任务，请打开已有恢复记录。')
         proposal=e.read_json(folder/'partial-proposal.json');signature=proposal.pop('id')
         e.require(signature==accepted_id==e.digest(proposal) and proposal['engine_sha256']==hashlib.sha256(Path(e.__file__).read_bytes()).hexdigest(),'恢复方案或程序版本已变化，请重新检查。')
@@ -80,10 +92,10 @@ def migrate(folder,destination,accepted_id,reviewer):
         e.save(destination/'execution-plan.json',plan)
         e.approve(destination,reviewer,plan['id'],simulated=False)
         log=copy.deepcopy(log);log.update(plan_id=plan['id'],status='paused',checkpoint=current,
-                                         created_receipts={name:current[name]},
-                                         phases=[{'op':proposal['operation'],'repo':name,'kind':'remote-created',
-                                                  'status':'passed','at':e.now(),'recovered_from':'reviewed-legacy'}])
-        log.pop('error',None)
+                                         created_receipts={**log.get('created_receipts',{}),name:current[name]},
+                                         phases=log.get('phases',[])+[{'op':proposal['operation'],'repo':name,'kind':'remote-created',
+                                                  'status':'passed','at':e.now(),'recovered_from':'reviewed-initial-repository'}])
+        log.pop('error',None);log.pop('pending_phase',None)
         e.save(destination/'execution-log.json',log)
         for filename in ('survey.json',):
             if (folder/filename).exists():e.save(destination/filename,e.read_json(folder/filename))

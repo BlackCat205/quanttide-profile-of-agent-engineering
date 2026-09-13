@@ -5,9 +5,9 @@
 
 ## 第二大脑创建工具（本地测试通过版）
 
-直接下载：[完整试用版 ZIP（0.8.5）](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.5.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
+直接下载：[完整试用版 ZIP（0.8.6）](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.8.6.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
 
-本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.5 分开显示当前错误和历史错误，统一下载恢复策略；推送中断后先核对远端结果，再决定是否有限重试。升级后可从最近记录打开兼容的原任务继续，不需要换名称重建。真实 Windows 最终报告及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
+本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.8.6 增加“建仓成功但回执丢失”的页面核对接续入口，确认初始骨架后保留已完成记录继续；同时保留当前错误独立展示、下载恢复与推送结果核对。升级后可从最近记录打开兼容的原任务继续，不需要换名称重建。真实 Windows 最终报告及组织创建验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
 
 ## 目录结构
 

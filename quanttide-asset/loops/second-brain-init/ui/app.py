@@ -35,13 +35,18 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.8.6'
+VERSION='0.9.0'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
 
 def read(path, default=None):
-    return e.read_json(path) if path.is_file() else default
+    try:
+        value=e.read_json(path)
+        if Path(path).name!='requests.json' and not isinstance(value,dict):
+            raise e.WorkflowError('任务记录格式损坏：'+str(path),code='record-corrupt')
+        return value
+    except FileNotFoundError:return default
 
 def cleaned_error(exc):
     return str(exc)[:1500] or '操作中断，请保留记录后检查。'
@@ -79,6 +84,35 @@ def current_failure(meta,log):
     if value and not value.startswith('连接检测完成'):return value
     return log.get('error')
 
+def record_recovery(failure):
+    corrupt=failure.get('code')=='record-corrupt'
+    return {'code':failure.get('code','local-record'),'title':'关键任务记录需要检查',
+        'summary':'关键记录暂不可用，尚未授权任何新的远端写入。',
+        'protected':'保留原任务、计划、仓库和已保存进度；不把读不到的记录当成空记录。',
+        'action':'storage-check','action_label':'处理后重新检查记录',
+        'steps':['关闭正在编辑或独占该文件的程序，保留本工具窗口。',
+                 '记录内容损坏时保留原件，请维护者按备份和远端凭据核对，不要清空 JSON。' if corrupt else '检查所示文件的访问权限；无需删除任务目录或改名重建。',
+                 '点击“处理后重新检查记录”，检查成功后再核对原任务。']}
+
+def artifact_status(plan,log,report):
+    rows=[]
+    for name in plan['names']:
+        state=(log.get('checkpoint') or plan['before']).get(name,{})
+        phases=[p for p in log.get('phases',[]) if p.get('repo')==name]
+        local,remote=state.get('local'),state.get('remote')
+        status='尚未创建（上次观察）' if not state.get('remote_exists') else '仓库已存在'
+        if any(p['kind']=='files-written' for p in phases):status='本地内容已生成，待同步'
+        if local:status='本地提交已保存，待同步'
+        if local and local==remote and not state.get('status'):status='已同步（上次核对）'
+        if state.get('status'):status='本地仍有未同步修改'
+        pending=log.get('pending_phase') or {}
+        if pending.get('repo')==name:status='当前操作结果待核对'
+        at=phases[-1].get('at') if phases else plan.get('created_at')
+        rows.append({'name':name,'status':status,'local_commit':local,'remote_commit':remote,
+            'observed_at':at,'url':'https://github.com/'+plan['organization']+'/'+name if plan['provider']=='github' and state.get('remote_exists') else None,
+            'path':str(e.Provider(plan['workspace'],plan['provider'],plan['organization']).repo(name))})
+    return rows
+
 
 def recovery_guidance(folder,meta,plan,log,requests):
     if meta.get('status')!='paused':return None
@@ -86,6 +120,8 @@ def recovery_guidance(folder,meta,plan,log,requests):
     evidence=[];current=log.get('current') or log.get('intent') or {}
     if current.get('repo'):evidence.append('暂停位置：'+current['repo']+' · '+current.get('kind','当前步骤'))
     if failed:evidence.append('最近失败通道：'+failed.get('tool','外部服务')+' '+failed.get('operation','请求')+' · '+failed.get('category','未分类'))
+    if not plan and (log or (folder/'approval-record.json').exists()):
+        return record_recovery({'code':'record-corrupt'})
     if not plan:
         return {'code':'plan-missing','title':'尚未形成创建方案','summary':'没有进入人工确认，也没有开始创建或推送仓库。','protected':'原填写内容和这条记录已保留。','action':'retry-plan','action_label':'重新生成方案','evidence':evidence,
                 'steps':['点击“重新生成方案”。','程序重新读取规则和仓库现状；仍然不会直接写入。','看到新方案后再逐项确认。']}
@@ -97,15 +133,18 @@ def recovery_guidance(folder,meta,plan,log,requests):
         return {'code':'repair-review','title':'需要核对独立修复方案','summary':'创建记录已保留；只允许页面列出的窄范围修复。','protected':'不会重建仓库或改写原执行记录。','action':'repair','action_label':'查看修复方案','evidence':evidence,
                 'steps':['阅读页面列出的目标仓库和唯一文件。','确认内容后执行窄范围修复。','程序重新核验，不修改原执行记录。']}
     reason=current_failure(meta,log) or ''
+    failure=meta.get('failure') or log.get('failure') or e.error_info(e.WorkflowError(reason))
+    if failure['code'] in ('local-record','record-corrupt') and meta.get('storage_checked_at','')<=failure.get('at','9999'):
+        return record_recovery(failure)
     if partial_recovery.eligible(plan,log) and ('状态已变化' in reason or '仓库已变化' in reason or read(folder/'partial-proposal.json')):
         return {'code':'unreceipted-create','title':'仓库已出现，但本任务没有收到建仓确认',
                 'summary':'先只读核对仓库身份、权限、初始提交及 README。符合初始骨架才允许你确认接续。',
                 'protected':'不重建仓库、不覆盖文件；已有完成记录保留，同名本身不能证明创建归属。',
                 'action':'partial','action_label':'检查接续方案','evidence':evidence,
                 'steps':['点击“检查接续方案”，程序只读取初始仓库。','核对目标账号、仓库、README 和提交，再勾选允许接续。','打开生成的恢复任务，点击“自动核对并继续”；已完成项保持完成。']}
-    if any(word in reason for word in ('锁','已变化','范围外','额外文件','未归属','共同历史','认证或权限受限','登录已失效','请先登录','执行器版本','配置规格')):
+    if failure['code'] in ('busy','drift','authorization','incompatible'):
         guidance=manual_guidance({'error':reason},{},evidence)
-        fixable=any(word in reason for word in ('锁','认证或权限受限','登录已失效','请先登录'))
+        fixable=failure['code'] in ('busy','authorization')
         if compatible and fixable:
             guidance.update(code='resolve-then-check',title='先处理页面列出的原因，再核对恢复',
                 summary='处理账号权限或确认其他任务已退出后，程序仍会重新核对现场；不会跳过检查。',
@@ -113,6 +152,19 @@ def recovery_guidance(folder,meta,plan,log,requests):
                 action_label='处理后核对并继续' if completed<total else '处理后重新核验')
         return guidance
     if compatible and completed<total:
+        if failure['code']=='connection' and failure.get('attempts',0)>=3:
+            try:connection=read(folder/'connection-check.json',{})
+            except (OSError,e.WorkflowError):connection={}
+            recent=connection.get('finished_at','')>failure.get('at','9999')
+            download_ok=any(row.get('label')=='下载连接' and row.get('status')=='passed' for row in connection.get('checks',[]))
+            if not (recent and download_ok):
+                return {'code':'transport-unavailable','title':'Git 传输连续失败，需要先检查连接',
+                    'summary':'账号接口可用不等于 Git 下载或推送可用。已停止本轮重试。',
+                    'protected':'本地提交和原任务保留，检测不会创建或推送仓库。',
+                    'action':'connection-check','action_label':'处理网络后检查连接','evidence':evidence,
+                    'steps':['核对当前网络和 Git 使用的代理是否可用；不要把密码或令牌粘贴到页面。',
+                             '处理后点击“检查 GitHub 连接”，分别查看账号、远端版本和下载结果。',
+                             '下载检测恢复后，再核对并继续；实际推送是否成功仍以远端提交核对为准。']}
         connection=failed and failed.get('category')=='connection'
         return {'code':'resume-safe-check','title':f'已保存 {completed}/{total} 项，可从下一项核对恢复','summary':('网络数据通道中断；' if connection else '当前步骤未完成；')+'程序会先核对仓库身份、提交和工作流文件，再决定是否继续。','protected':'已完成项不会重做；推送结果不明时先查远端，不会盲目重复推送。','action':'resume','action_label':'自动核对并继续','evidence':evidence,
                 'steps':['点击“自动核对并继续”。','程序核对仓库 ID、远端提交、本机提交和已生成文件。','核对一致才从下一项继续；网络仍不可用时保留同一检查点，可稍后再次点击。']}
@@ -131,7 +183,7 @@ def manual_guidance(meta,log,evidence):
     elif any(word in reason for word in ('范围外','文件内容已变化','仓库已变化','状态已变化','提交已变化','身份已变化','分支已变化','目标已变化','共同历史','额外文件','未归属')):
         steps=['不要删除或覆盖提示中的本机文件。','请仓库维护者判断这些修改应提交、移走还是保留。','处理后重新调查并生成新方案；原任务继续作为审计记录保留。']
     elif any(word in reason for word in ('执行器版本','配置规格','计划内容已变化')):
-        steps=['保留这条旧记录，不手工修改 JSON。','使用当前版本重新填写并生成方案。','新方案会重新读取现状，只规划尚未完成的合规动作。']
+        steps=['保留这条旧记录，不手工修改 JSON。','兼容的旧任务直接继续；不兼容的任务先保留原版本和备份。','请维护者核对迁移范围，不通过重新创建同名领域绕过版本检查。']
     elif '认证或权限' in reason or '登录' in reason:
         steps=['在页面检查 GitHub 登录账号。','确认该账号具有目标仓库写入权限，再核对并继续。','检测连接通过只证明相应读取可用，不代表有写入权限。']
     else:
@@ -165,16 +217,53 @@ class Studio:
     def __init__(self,storage,enable_github=False,test_mode=False):
         self.storage=Path(storage).resolve();self.storage.mkdir(parents=True,exist_ok=True)
         self.enable_github=enable_github;self.test_mode=test_mode
-        self.guard=threading.RLock();self.active=set();self.request_log_errors={};self.login=Login()
+        self.guard=threading.RLock();self.active=set();self.request_log_errors={};self.request_cache={};self.runtime_errors={};self.login=Login()
         # Surviving records do not imply that a worker is still running after a restart.
         for folder in self.storage.glob('runs/*'):
-            meta=read(folder/'ui.json',{})
+            try:meta=read(folder/'ui.json',{})
+            except (OSError,e.WorkflowError) as exc:
+                self.runtime_errors[folder.name]=e.error_info(exc);continue
             if meta.get('status') in ('planning','running','verifying'):
-                meta.update(status='paused',error='上次窗口服务已结束。请查看已完成步骤，再尝试继续；有残留锁时请维护者检查。')
-                e.save(folder/'ui.json',meta)
+                meta.update(status='paused',error='上次窗口服务已结束。请查看已完成步骤，再尝试继续；程序会检查执行锁和已有凭据后恢复。')
+                try:e.save(folder/'ui.json',meta)
+                except OSError as exc:self.runtime_errors[folder.name]=e.error_info(exc)
         for folder in self.storage.glob('surveys/*'):
-            meta=read(folder/'ui.json',{})
+            try:meta=read(folder/'ui.json',{})
+            except (OSError,e.WorkflowError) as exc:
+                self.runtime_errors[folder.name]=e.error_info(exc);continue
             if meta.get('status')=='surveying':self.set_meta(folder,status='paused',error='上次调查中断，请重新查询。')
+
+    def requests(self,folder):
+        key=folder.name
+        try:
+            rows=read(folder/'requests.json',[])
+            if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
+                raise e.WorkflowError('请求日志格式损坏',code='record-corrupt')
+            with self.guard:self.request_cache[key]=rows
+            if self.request_log_errors.get(key,{}).get('operation')=='read-request-log':
+                self.request_log_errors.pop(key,None)
+            return rows
+        except (OSError,e.WorkflowError) as exc:
+            self.request_log_errors[key]={'operation':'read-request-log','category':'local-file-busy',
+                'status':'unknown','reason':'请求诊断日志暂不可读；不是执行凭据，不据此判断操作是否发生。','at':e.now()}
+            return self.request_cache.get(key,[])
+
+    def history(self):
+        rows=[];sources=set()
+        for folder in self.storage.glob('runs/*'):
+            try:
+                meta=read(folder/'ui.json',{})
+                if not meta:continue
+                migration=read(folder/'partial-migration.json')
+                if migration:
+                    destination=self.storage/'runs'/migration['destination']
+                    if (destination/'ui.json').is_file():sources.add(folder.name)
+                meta=dict(meta,id=folder.name)
+                if folder.name in self.runtime_errors:meta.update(status='paused')
+                rows.append(meta)
+            except (OSError,e.WorkflowError):
+                rows.append({'id':folder.name,'title':'记录暂不可读','status':'paused','created_at':''})
+        return sorted([row for row in rows if row['id'] not in sources],key=lambda row:row.get('created_at',''),reverse=True)
 
     def start_survey(self,payload):
         validation=validate_request(payload);e.require(validation['valid'],'请先填写有效需求，再查询本次目标。')
@@ -205,7 +294,9 @@ class Studio:
 
     def set_meta(self,folder,**values):
         with self.guard:
-            meta=read(folder/'ui.json',{});meta.update(values);e.save(folder/'ui.json',meta)
+            meta=read(folder/'ui.json',{});meta.update(values)
+            if 'error' in values and values['error'] is None:meta.pop('failure',None)
+            e.save(folder/'ui.json',meta);self.runtime_errors.pop(folder.name,None)
 
     def spawn(self,folder,fn):
         key=folder.name
@@ -220,20 +311,36 @@ class Studio:
                             events=read(folder/'requests.json',[])
                             warning=self.request_log_errors.get(key)
                             if warning:events.append(warning)
+                            if not isinstance(events,list):raise e.WorkflowError('请求日志格式错误',code='record-corrupt')
                             events.append(event);e.save(folder/'requests.json',events[-2000:])
+                            self.request_cache[key]=events[-2000:]
                             self.request_log_errors.pop(key,None)
-                    except OSError:
+                    except (OSError,e.WorkflowError):
                         with self.guard:
                             self.request_log_errors[key]={'target':None,'operation':'save-request-log','tool':'local-record','stage':'diagnostics','attempt':1,'started_at':e.now(),'status':'unknown','category':'local-file-busy','reason':'Windows 暂时占用请求日志；主任务未因此停止。'}
                 e.request_observer.callback=request_event
                 survey.observer.callback=request_event
                 e.request_observer.stage='preflight'
-                history=read(folder/'requests.json',[])
-                e.request_observer.http1=any(row.get('tool')=='git' and row.get('target') and (row.get('protocol')=='HTTP/1.1' or row.get('category')=='connection') for row in history)
+                history=self.requests(folder)
+                e.request_observer.http1=bool(self.request_log_errors.get(key)) or any(row.get('tool')=='git' and row.get('target') and (row.get('protocol')=='HTTP/1.1' or row.get('category')=='connection') for row in history)
                 e.verification_observer.callback=lambda progress:e.save(folder/'verification-progress.json',progress)
-                fn()
-            except Exception as exc:self.set_meta(folder,status='paused',error=cleaned_error(exc))
+                deadline=time.monotonic()+30
+                while True:
+                    plan=read(folder/'execution-plan.json')
+                    if not plan:fn();break
+                    try:
+                        with e.execution_locks(folder,plan['workspace']):fn()
+                        break
+                    except e.WorkflowError as exc:
+                        if e.error_info(exc)['code']!='busy' or time.monotonic()>=deadline:raise
+                        self.set_meta(folder,phase='同一总入口有任务正在运行，正在等待；不会重复写入。')
+                        time.sleep(.25)
+            except Exception as exc:
+                failure=e.error_info(exc)
+                try:self.set_meta(folder,status='paused',error=cleaned_error(exc),failure=failure)
+                except (OSError,e.WorkflowError):self.runtime_errors[key]=failure
             finally:
+                e.request_observer.before_write=None
                 with self.guard:self.active.discard(key)
         threading.Thread(target=worker,daemon=True).start()
 
@@ -303,6 +410,7 @@ class Studio:
             e.require(key not in self.active,'正在处理中，请勿重复点击。')
             e.require(meta.get('status')=='paused','只有尚未生成方案的暂停任务可以重试。')
             e.require(not (folder/'execution-plan.json').exists(),'这份任务已有执行方案，请使用对应的继续或核验操作。')
+            e.require(not (folder/'execution-log.json').exists() and not (folder/'approval-record.json').exists(),'已执行或已确认的任务缺少计划，不能重新生成覆盖记录。')
             e.require((folder/'request.yaml').is_file(),'这份旧记录缺少需求配置，请返回填写后重新生成。')
             self.set_meta(folder,status='planning',error=None,phase='正在重新读取目标仓库和规则；尚未创建或推送仓库。')
             self.spawn(folder,lambda:self.planning_task(folder,meta['provider'],meta['organization'],meta['root_repo'],meta['root_mode']))
@@ -317,7 +425,7 @@ class Studio:
             e.require(payload.get('plan_id')==plan['id'],'页面中的计划已过时，请重新打开。')
             if plan['provider']=='github':
                 e.check_identity(plan)
-                e.require(not any(read(p/'ui.json',{}).get('provider')=='github' and p.name in self.active for p in (self.storage/'runs').glob('*')), '已有 GitHub 任务执行中，请完成后再提交其他任务。')
+                # Execution is serialized across processes by the target-root lock.
             if not resume:
                 e.require(payload.get('confirmed') is True,'请先勾选已阅读本次创建范围。')
                 reviewer=payload.get('reviewer','').strip();e.require(0<len(reviewer)<=80,'请填写审阅者姓名（最多 80 字）。')
@@ -366,7 +474,7 @@ class Studio:
                 except e.WorkflowError as exc:
                     log=read(folder/'execution-log.json',{})
                     if log:
-                        log['status']='paused';log['error']=str(exc)
+                        log['status']='paused';log['error']=str(exc);log['failure']=e.error_info(exc)
                         log.setdefault('first_error',str(exc))
                         if log.get('current'):log['current']['status']='failed'
                         e.save(folder/'execution-log.json',log)
@@ -487,7 +595,7 @@ class Studio:
                     except Exception as exc:row.update(status='unknown',reason=cleaned_error(exc))
                     row['finished_at']=e.now();result['checks'].append(row);e.save(folder/'connection-check.json',result)
                 result['finished_at']=e.now();e.save(folder/'connection-check.json',result)
-                self.set_meta(folder,status=previous,error=previous_error,connection_notice='连接检测完成；本次没有执行创建或推送。')
+                self.set_meta(folder,status=previous,error=previous_error,failure=previous_meta.get('failure'),connection_notice='连接检测完成；本次没有执行创建或推送。')
             self.spawn(folder,task)
         return {'id':key}
 
@@ -529,11 +637,11 @@ class Studio:
             return value
         report=read(folder/'verification-report.json',{})
         report={k:v for k,v in report.items() if k in ('status','at','plan_id','provider','details')}
-        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','first_error','owned_files','phases','created_receipts','intent','pending_phase','creation_responses')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at')}}}
+        records={'diagnosis.json':{'version':VERSION,'exported_at':e.now(),'plan':{k:plan.get(k) for k in ('id','version','provider','scenario','names','engine_sha256','spec_sha256')},'execution':{k:log.get(k) for k in ('plan_id','status','completed','events','current','error','first_error','owned_files','phases','created_receipts','intent','pending_phase','creation_responses','failure','write_intent')},'checkpoint':checkpoints,'verification':report,'repair':read(folder/'repair-record.json'),'repair_check':read(folder/'repair-check.json'),'ui':{k:v for k,v in read(folder/'ui.json',{}).items() if k in ('status','error','created_at','failure')}}}
         observation=read(folder/'survey.json',{})
         records['diagnosis.json']['survey']={k:observation.get(k) for k in ('started_at','finished_at','access')}
         records['diagnosis.json']['survey']['rules']=survey.rules_diagnostic(observation.get('rules',{}))
-        records['diagnosis.json']['requests']=read(folder/'requests.json',[])
+        records['diagnosis.json']['requests']=self.requests(folder)
         records['diagnosis.json']['request_log_error']=self.request_log_errors.get(key)
         records['diagnosis.json']['connection_check']=read(folder/'connection-check.json')
         records['diagnosis.json']['partial_migration']=read(folder/'partial-migration.json')
@@ -561,7 +669,41 @@ class Studio:
             return record
 
     def view(self,key):
-        folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{});requests=read(folder/'requests.json',[])
+        folder=self.folder(key)
+        try:
+            result=self._view(key)
+            if key in self.runtime_errors and key not in self.active:
+                failure=self.runtime_errors[key]
+                result.update(status='paused',current_error=failure['message'],failure=failure)
+                result['recovery']=record_recovery(failure)
+                result['can_resume']=False
+            return result
+        except (OSError,e.WorkflowError) as exc:
+            failure=e.error_info(exc)
+            return {'id':key,'title':'任务记录需要检查','status':'paused','current_error':failure['message'],
+                    'has_plan':False,'can_resume':False,'completed':0,'total':0,'events':[],
+                    'failure':failure,'recovery':record_recovery(failure),'storage':str(folder)}
+
+    def check_storage(self,key):
+        folder=self.folder(key)
+        e.require(key not in self.active,'任务仍在执行，请等待。')
+        meta=read(folder/'ui.json',{})
+        if (folder/'execution-plan.json').exists():
+            plan=e.load_plan(folder,readonly=True)
+            log=read(folder/'execution-log.json',{})
+            approval=read(folder/'approval-record.json',{})
+            e.require(not log or log.get('plan_id')==plan['id'],'执行凭据与计划不匹配，保留原记录。')
+            e.require(not approval or approval.get('plan_id')==plan['id'],'确认记录与计划不匹配，保留原记录。')
+        elif (folder/'execution-log.json').exists() or (folder/'approval-record.json').exists():
+            raise e.WorkflowError('缺少已执行任务的计划；不能按全新任务重建。',code='record-corrupt')
+        status='review' if (folder/'execution-plan.json').exists() and not (folder/'approval-record.json').exists() and not (folder/'execution-log.json').exists() else 'paused'
+        self.set_meta(folder,status=status,error=None,storage_checked_at=e.now())
+        return {'id':key,'status':'checked'}
+
+    def _view(self,key):
+        folder=self.folder(key);meta=read(folder/'ui.json',{});plan=read(folder/'execution-plan.json');log=read(folder/'execution-log.json',{});requests=self.requests(folder)
+        if not plan and (log or (folder/'approval-record.json').exists()):
+            raise e.WorkflowError('已执行或已确认的任务缺少计划，不能作为新任务重建。',code='record-corrupt')
         compatible=bool(plan and e.engine_compatible(plan))
         result=dict(meta,current_error=current_failure(meta,log),has_plan=bool(plan),first_error=log.get('first_error',log.get('error')),phases=log.get('phases',[]),legacy_partial=partial_recovery.eligible(plan,log),completed=len(log.get('completed',[])),total=len(plan['operations']) if plan else 0,can_resume=bool(plan and (folder/'approval-record.json').is_file() and len(log.get('completed',[]))<len(plan['operations']) and compatible),storage=str(folder),pre_execution=read(folder/'pre-execution-check.json'),survey=read(folder/'survey.json'),current_operation=log.get('current'),events=log.get('events',[]))
         if plan:
@@ -582,9 +724,11 @@ class Studio:
                 row['observed_commit']=before['remote']
                 row['action']='拟更新已有总入口' if before.get('remote_exists') and row['name']==root_name else '冲突：新建禁止复用' if before.get('remote_exists') else '拟新建本地仓库' if plan['provider']=='local' else '未发现可见仓库；仅尝试新建，重名时停止'
                 row['writes']=[op['kind'] for op in plan['operations'] if op['repo']==row['name']]
-        result['verification_progress']=read(folder/'verification-progress.json')
+        try:result['verification_progress']=read(folder/'verification-progress.json')
+        except (OSError,e.WorkflowError):result['verification_progress']=None
         result['pending_phase']=log.get('pending_phase')
-        result['connection_check']=read(folder/'connection-check.json')
+        try:result['connection_check']=read(folder/'connection-check.json')
+        except (OSError,e.WorkflowError):result['connection_check']={'checks':[{'label':'连接检测记录','status':'unknown','reason':'检测记录暂不可读，可重新检测。'}]}
         result['last_request']=next(iter(reversed(requests)),None)
         result['recovery']=recovery_guidance(folder,meta,plan,log,requests)
         result['partial_proposal']=read(folder/'partial-proposal.json')
@@ -597,6 +741,14 @@ class Studio:
         acceptance=read(folder/'human-acceptance.json')
         if acceptance and result['report']:acceptance['stale']=acceptance['signature']!=result['report']['signature']
         result['acceptance']=acceptance
+        result['diagnostic_warning']=self.request_log_errors.get(key)
+        result['failure']=meta.get('failure') or log.get('failure')
+        result['artifacts']=artifact_status(plan,log,result.get('report')) if plan else []
+        result['milestones']={'operations_done':bool(plan and result['completed']==result['total']),
+            'technical_passed':bool(result.get('report',{} ) and result['report'].get('technical_passed')),
+            'human_passed':bool(acceptance and not acceptance.get('stale') and acceptance.get('overall')=='passed' and not acceptance.get('simulated'))}
+        result['migration']=read(folder/'migration.json')
+        result['compatibility']='compatible' if compatible else 'review-required' if plan else 'no-plan'
         return result
 
     def document(self,key,name):
@@ -650,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
             self.guard();studio=self.server.studio
             if path=='/api/github/login':return self.send(200,studio.login.status())
             if path=='/api/info':return self.send(200,{'version':VERSION,'storage':str(studio.storage),'github_enabled':studio.enable_github,'simulated':studio.test_mode,'git':shutil.which('git') is not None})
-            if path=='/api/runs':return self.send(200,sorted([read(p,{}) for p in studio.storage.glob('runs/*/ui.json')],key=lambda x:x.get('created_at',''),reverse=True))
+            if path=='/api/runs':return self.send(200,studio.history())
             if path=='/api/naming-rules':return self.send(200,naming_rules())
             survey_match=re.fullmatch('/api/surveys/([a-f0-9]{16})',path)
             if survey_match:return self.send(200,studio.survey_view(survey_match[1]))
@@ -673,12 +825,13 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/github/cancel':return self.send(200,studio.login.cancel())
             if path=='/api/plan':return self.send(200,studio.create(payload))
             if path=='/api/survey':return self.send(200,studio.start_survey(payload))
-            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|retry-plan|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply|connection-check)',path)
+            m=re.fullmatch('/api/runs/([a-f0-9]{16})/(execute|resume|retry-plan|verify|acceptance|document|repair-preview|repair-apply|partial-preview|partial-apply|connection-check|storage-check)',path)
             e.require(m,'不支持此操作。');key,action=m.groups()
             if action in ('execute','resume'):data=studio.execute(key,payload,action=='resume')
             elif action=='verify':data=studio.verify(key)
             elif action=='retry-plan':data=studio.retry_plan(key)
             elif action=='connection-check':data=studio.connection_task(key)
+            elif action=='storage-check':data=studio.check_storage(key)
             elif action in ('partial-preview','partial-apply'):data=studio.partial_task(key,payload,action=='partial-apply')
             elif action in ('repair-preview','repair-apply'):data=studio.repair_task(key,payload,action=='repair-apply')
             elif action=='acceptance':data=studio.acceptance(key,payload)
@@ -694,13 +847,36 @@ def main():
     p.add_argument('--local-only',action='store_true',help='关闭真实 GitHub 入口')
     p.add_argument('--test-mode',action='store_true',help='明确标注自动化试用反馈为模拟')
     args=p.parse_args();e.require(not(args.test_mode and args.enable_github),'自动测试模式不能启用真实 GitHub。')
-    server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler);server.token=secrets.token_urlsafe(32);server.studio=Studio(args.storage,not(args.local_only or args.test_mode),args.test_mode)
-    url=f'http://127.0.0.1:{server.server_port}/#'+server.token
-    print('第二大脑创建向导已启动。关闭此窗口将停止服务。',flush=True)
-    print(url,flush=True)
-    if not args.no_browser:webbrowser.open(url)
-    try:server.serve_forever()
-    except KeyboardInterrupt:pass
-    finally:server.studio.login.cancel();server.server_close()
+    args.storage=args.storage.resolve();args.storage.mkdir(parents=True,exist_ok=True)
+    try:
+        with e.process_lock(args.storage/'.ui-service.guard'):
+            server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
+            server.token=secrets.token_urlsafe(32)
+            server.studio=Studio(args.storage,not(args.local_only or args.test_mode),args.test_mode)
+            url=f'http://127.0.0.1:{server.server_port}/#'+server.token
+            e.save(args.storage/'.ui-service.json',{'url':url,'pid':os.getpid(),'version':VERSION})
+            print('第二大脑创建向导已启动。关闭此窗口将停止服务。',flush=True)
+            print(url,flush=True)
+            if not args.no_browser:webbrowser.open(url)
+            try:server.serve_forever()
+            except KeyboardInterrupt:pass
+            finally:server.studio.login.cancel();server.server_close()
+    except e.WorkflowError as exc:
+        if e.error_info(exc)['code']!='busy':raise
+        # Never trust a stale service record without authenticating its loopback endpoint.
+        from urllib.request import Request,urlopen
+        try:
+            info=read(args.storage/'.ui-service.json',{})
+            url=info.get('url','')
+            e.require(bool(re.fullmatch(r'http://127\.0\.0\.1:[0-9]+/#[-_A-Za-z0-9]+',url)),'已有窗口正在启动，请稍后重试。')
+            base,token=url.split('/#')
+            with urlopen(Request(base+'/api/info',headers={'X-Session-Token':token}),timeout=2) as response:
+                existing=json.load(response)
+            e.require(existing.get('storage')==str(args.storage),'已有服务的记录目录不一致。')
+            print('已打开现有向导，版本 '+existing['version']+'。升级前请关闭原启动窗口。',flush=True)
+            if not args.no_browser:webbrowser.open(url)
+        except (OSError,ValueError,e.WorkflowError):
+            print('已有向导正在使用此记录目录。请等待原窗口，勿同时启动多个版本。',flush=True)
+
 
 if __name__=='__main__':main()

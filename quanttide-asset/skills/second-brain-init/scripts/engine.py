@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
@@ -20,8 +20,10 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.4.6'
+VERSION = '0.5.0'
 COMPATIBLE_ENGINE_SHA256S = {
+    # 0.4.6: storage and coordination upgrade; approved operations are unchanged.
+    '5b2d36940bae6355215c18101a51b722d59e1f8b752e4127410ad58ba56b75c0',
     # 0.4.5: same approved content; only transport reconciliation changes.
     '638d45a0d91059dfacf687ec478e030cb2590a607233d82dbcffed3de0a984cc',
     # 0.4.1: execution operations and generated content are unchanged. 0.4.2
@@ -56,11 +58,29 @@ CC = 'Creative Commons Attribution 4.0 International (CC BY 4.0)\n\nThis work is
 APACHE = 'Apache License, Version 2.0\n\nLicensed under the Apache License, Version 2.0 (the "License");\nyou may not use this work except in compliance with the License.\nYou may obtain a copy of the License at\n\n    https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an "AS IS" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n'
 
 class WorkflowError(Exception):
-    pass
+    def __init__(self, message, code=None, **details):
+        super().__init__(message)
+        self.code=code
+        self.details=details
 
 class RemoteReadError(WorkflowError):
     """Remote state was not observed; this is not evidence of invalid assets."""
     pass
+
+def error_info(exc):
+    """Structured errors for new records; text fallback only for legacy errors."""
+    message=str(exc)
+    code=getattr(exc,'code',None)
+    if not code:
+        if isinstance(exc,OSError):code='local-record'
+        elif isinstance(exc,RemoteReadError):code='remote-unknown'
+        elif any(x in message for x in ('连接中断','超时','无法核对','远端无法读取')):code='connection'
+        elif any(x in message for x in ('认证','权限','登录')):code='authorization'
+        elif '锁' in message:code='busy'
+        elif any(x in message for x in ('执行器版本','配置规格')):code='incompatible'
+        elif any(x in message for x in ('已变化','范围外','未归属','共同历史','额外文件')):code='drift'
+        else:code='workflow'
+    return {'code':code,'message':message[:1500],'at':now(),**getattr(exc,'details',{})}
 
 def require(condition, message):
     if not condition:
@@ -104,7 +124,79 @@ def save(path, value):
                 except OSError:pass
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    path=Path(path)
+    for attempt in range(5):
+        try:
+            with _save_lock(path):return json.loads(path.read_text(encoding='utf-8'))
+        except PermissionError:
+            if attempt==4:raise
+            time.sleep(.05*(attempt+1))
+        except (ValueError,UnicodeError) as exc:
+            raise WorkflowError('记录内容不完整或损坏：'+str(path)+'；保留原文件，不能当作空记录继续。',
+                                code='record-corrupt',file=path.name) from exc
+
+
+_process_locks_guard=threading.RLock()
+_process_locks={}
+
+@contextmanager
+def process_lock(path):
+    """Kernel-owned lock: crash releases ownership; never unlink the lock inode."""
+    path=Path(path).resolve();key=str(path);owner=threading.get_ident()
+    with _process_locks_guard:
+        existing=_process_locks.get(key)
+        if existing:
+            if existing[0]!=owner:raise WorkflowError('任务正在占用此执行锁，请等待现有任务结束。',code='busy')
+            existing[1]+=1
+        else:
+            path.parent.mkdir(parents=True,exist_ok=True)
+            handle=path.open('a+b')
+            try:
+                if os.name=='nt':
+                    import msvcrt
+                    if path.stat().st_size==0:handle.write(b'0');handle.flush()
+                    handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except OSError as exc:
+                handle.close()
+                raise WorkflowError('另一个窗口或任务持有执行锁，请等待它结束。',code='busy') from exc
+            _process_locks[key]=[owner,1,handle]
+    try:yield
+    finally:
+        with _process_locks_guard:
+            entry=_process_locks[key];entry[1]-=1
+            if not entry[1]:
+                handle=entry[2]
+                try:
+                    if os.name=='nt':
+                        import msvcrt
+                        handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+                finally:handle.close();del _process_locks[key]
+
+def process_alive(pid):
+    if pid<=0:return True
+    if os.name=='nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel.OpenProcess.restype=wintypes.HANDLE
+        kernel.GetExitCodeProcess.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.DWORD)]
+        kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+        handle=kernel.OpenProcess(0x1000,False,pid)
+        if not handle:return ctypes.get_last_error()!=87
+        try:
+            status=wintypes.DWORD()
+            return not kernel.GetExitCodeProcess(handle,ctypes.byref(status)) or status.value==259
+        finally:kernel.CloseHandle(handle)
+    try:os.kill(pid,0);return True
+    except ProcessLookupError:return False
+    except PermissionError:return True
 
 def read_yaml(path):
     value = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
@@ -168,7 +260,7 @@ def command(argv, cwd=None, check=True):
         for key,value in [('credential.https://github.com.helper',''),('credential.https://github.com.helper','!gh auth git-credential')]:
             env['GIT_CONFIG_KEY_'+str(count)]=key;env['GIT_CONFIG_VALUE_'+str(count)]=value;count+=1
         env['GIT_CONFIG_COUNT']=str(count)
-    gh_readonly=(args[0]=='gh' and kind=='api' and not any(
+    gh_readonly=(args[0]=='gh' and kind=='api' and not any(flag in args for flag in ('-f','-F','--field','--raw-field','--input')) and not any(
         value.upper() in ('POST','PUT','PATCH','DELETE')
         for flag,value in zip(args,args[1:]) if flag in ('--method','-X')))
     readonly=(args[0]=='git' and kind=='ls-remote') or gh_readonly
@@ -181,7 +273,10 @@ def command(argv, cwd=None, check=True):
         if compatibility:
             run_env['GIT_CONFIG_KEY_'+str(count)]='http.https://github.com/.version'
             run_env['GIT_CONFIG_VALUE_'+str(count)]='HTTP/1.1';run_env['GIT_CONFIG_COUNT']=str(count+1)
-        event={'target':target,'operation':kind,'tool':args[0],'stage':getattr(request_observer,'stage',None),'attempt':attempt+1,'started_at':now(),'status':'running','protocol':'HTTP/1.1' if compatibility else 'default'}
+        event={'target':target,'operation':kind,'tool':args[0],'stage':getattr(request_observer,'stage',None),'attempt':attempt+1,'started_at':now(),'status':'running','protocol':'HTTP/1.1' if compatibility else 'default','method':('GET' if gh_readonly else 'WRITE') if args[0]=='gh' else None,'operation_attempt':getattr(request_observer,'operation_attempt',1)}
+        before_write=getattr(request_observer,'before_write',None)
+        if before_write and ((args[0]=='git' and kind=='push') or (args[0]=='gh' and not gh_readonly)):
+            before_write(event)
         started=time.monotonic()
         if network:notify_observer(callback,dict(event))
         try:
@@ -206,7 +301,7 @@ def command(argv, cwd=None, check=True):
         if readonly and args[0]=='gh' and result.returncode and not authorization and not (http_status and 400<=http_status<500):
             transient=True
         category='authorization' if authorization else 'connection' if transient else 'git-or-service'
-        event.update(status='passed' if result.returncode==0 else 'failed',category=None if result.returncode==0 else category,exit_code=result.returncode,finished_at=now(),elapsed_seconds=round(time.monotonic()-started,3))
+        event.update(status='passed' if result.returncode==0 else 'failed',category=None if result.returncode==0 else category,exit_code=result.returncode,http_status=http_status,reason=('认证或权限受限' if authorization else 'DNS 解析失败' if 'could not resolve' in stderr else '连接超时或被重置' if transient else 'Git 或服务返回异常') if result.returncode else None,finished_at=now(),elapsed_seconds=round(time.monotonic()-started,3))
         if network:notify_observer(callback,event)
         if not result.returncode:
             if compatibility:request_observer.http1=True
@@ -215,7 +310,7 @@ def command(argv, cwd=None, check=True):
         time.sleep(.3*(attempt+1))
     if check and result.returncode:
         reason={'connection':'连接中断或超时','authorization':'认证或权限受限','git-or-service':'读取或 Git 状态异常'}[category]
-        raise (RemoteReadError if readonly else WorkflowError)(f'{target or "当前目标"} · {args[0]} {kind} 失败（退出码 {result.returncode}）：{reason}。本次已尝试 {attempt+1} 次。'+('暂时无法核验远端。' if readonly else '结果待核对，不会自动重复写入。'))
+        raise (RemoteReadError if readonly else WorkflowError)(f'{target or "当前目标"} · {args[0]} {kind} 失败（退出码 {result.returncode}）：{reason}。本次已尝试 {attempt+1} 次。'+('暂时无法核验远端。' if readonly else '结果待核对，不会自动重复写入。'),code='authorization' if authorization else 'connection' if transient else 'workflow',operation=kind,attempts=attempt+1)
     return result
 
 def git(path, *args, check=True):
@@ -234,7 +329,7 @@ def clone_isolated(remote, downloads, shallow=False):
         except WorkflowError as exc:
             if '连接中断或超时' not in str(exc):raise
             if attempt==2:
-                raise WorkflowError('下载连接中断或超时；隔离目录下载已尝试 3 次，目标工作目录未覆盖。可稍后核对并继续。') from exc
+                raise WorkflowError('下载连接中断或超时；隔离目录下载已尝试 3 次，目标工作目录未覆盖。可稍后核对并继续。',code='connection',operation='clone',attempts=3) from exc
             time.sleep(.3*(attempt+1))
 
 
@@ -353,6 +448,7 @@ class Provider:
             (path/'README.md').write_text('# '+title+'\n', encoding='utf-8')
             git(path, 'add', '--', 'README.md')
             git(path, 'commit', '-m', 'feat(asset): 初始化仓库')
+            if getattr(self,'phase',None):self.phase(name,'committed')
             git(path, 'push', '-u', 'origin', 'HEAD:main')
             if getattr(self,'phase',None):self.phase(name,'initialized')
 
@@ -387,11 +483,12 @@ class Provider:
             if remote==head:return
             require(remote==baseline,'远端提交已变化，停止重试；请维护者核对。')
             if attempt:request_observer.http1=True
+            request_observer.operation_attempt=attempt+1
             try:
                 # Pin the source SHA even if an external process moves local HEAD.
                 git(repo,'push','origin',head+':refs/heads/'+branch)
             except WorkflowError as exc:
-                if '连接中断或超时' not in str(exc):raise
+                if error_info(exc)['code']!='connection':raise
                 last_error=exc
             else:
                 last_error=None
@@ -405,7 +502,7 @@ class Provider:
             if last_error is None:
                 raise RemoteReadError('推送返回成功，但远端提交尚未确认；请重新核对，保留本机提交。')
             if attempt<2:time.sleep(.3*(attempt+1))
-        raise WorkflowError(f'{self.organization}/{name} · 推送连接中断或超时；已核对远端并尝试 3 次，仍未确认收到本机提交。进度已保存，可稍后核对并继续。') from last_error
+        raise WorkflowError(f'{self.organization}/{name} · 推送连接中断或超时；已核对远端并尝试 3 次，仍未确认收到本机提交。进度已保存，可稍后核对并继续。',code='connection',operation='push',attempts=3) from last_error
 
     def rename(self, old, new):
         old_path, new_path = self.repo(old), self.repo(new)
@@ -756,6 +853,7 @@ def reconcile_creation_response(provider, plan, state):
 
 def load_plan(run, readonly=False):
     plan = read_json(Path(run)/'execution-plan.json')
+    require(isinstance(plan,dict) and isinstance(plan.get('id'),str),'计划记录格式损坏，保留原记录并核对备份。')
     expected = plan.pop('id')
     require(digest(plan) == expected, '计划内容已变化，请重新生成并确认。')
     plan['id'] = expected
@@ -1056,24 +1154,42 @@ def verify(plan, approval=None):
             'human_acceptance':'not-assessed', 'real_github_execution':plan['provider']=='github', 'details':details}
 
 
+_execution_owners=threading.local()
+
 @contextmanager
 def execution_locks(run, workspace):
-    work = Path(workspace)
-    paths = [work.parent / ('.'+work.name+'.second-brain-init.lock'), run/'execution.lock']
-    acquired = []
-    try:
-        for path in paths:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try: handle = path.open('x')
-            except FileExistsError:
-                raise WorkflowError('目标工作区或运行记录已有执行锁；确认没有进程运行后再处理。') from None
-            acquired.append((path,handle))
-            handle.write(str(os.getpid())+'\n'); handle.flush()
-        yield
-    finally:
-        for path, handle in reversed(acquired):
-            handle.close()
-            path.unlink()
+    run=Path(run);work=Path(workspace)
+    paths=[work.parent/('.'+work.name+'.second-brain-init.lock'),run/'execution.lock']
+    acquired=[]
+    owned=getattr(_execution_owners,'paths',set());_execution_owners.paths=owned
+    with ExitStack() as stack:
+        plan=read_json(run/'execution-plan.json') if (run/'execution-plan.json').exists() else {}
+        if plan.get('provider')=='github':
+            target=plan['organization'].lower()+'/'+plan['config']['root_repo'].lower()
+            key=digest([str(Path.home()),target])
+            stack.enter_context(process_lock(Path(tempfile.gettempdir())/'quanttide-coordination'/key))
+        try:
+            for path in paths:
+                path=path.resolve()
+                if str(path) in owned:continue
+                stack.enter_context(process_lock(path.with_name(path.name+'.guard')))
+                path.parent.mkdir(parents=True,exist_ok=True)
+                if path.exists():
+                    old=path.read_text(encoding='utf-8').strip()
+                    require(old.isdecimal() and not process_alive(int(old)),
+                            '目标工作区或运行记录已有执行锁；持有进程仍在运行或无法确认身份。')
+                    # Preserve stale legacy evidence before reclaiming its sentinel.
+                    path.with_name(path.name+'.recovered').write_text(old,encoding='utf-8')
+                    path.unlink()
+                handle=path.open('x');acquired.append((path,handle));owned.add(str(path))
+                handle.write(str(os.getpid())+'\n');handle.flush()
+            yield
+        finally:
+            for path,handle in reversed(acquired):
+                handle.close();owned.discard(str(path))
+                try:path.unlink()
+                except OSError:pass # kernel guard releases; stale PID remains conservative
+
 
 def reconcile_interrupted_mount(provider,plan,state):
     """Complete one interrupted, approved mount from verified local repos.
@@ -1181,9 +1297,13 @@ def apply(run,prechecked=None):
             state.pop('pending_phase',None)
             save(state_file,state)
         executor.provider.phase = phase
+        def before_write(event):
+            state['write_intent']={'op':state.get('current',{}).get('op'),'target':event['target'],'operation':event['operation'],'at':now()}
+            save(state_file,state) # mandatory durability gate; never an optional observer
         state['status']='running'
-        state.pop('error',None)
+        state.pop('error',None);state.pop('failure',None)
         save(state_file,state)
+        request_observer.before_write=before_write
         try:
             for op in plan['operations']:
                 if op['id'] in state['completed']: continue
@@ -1219,12 +1339,14 @@ def apply(run,prechecked=None):
         except (WorkflowError, OSError, KeyboardInterrupt) as exc:
             state['status']='paused'
             state['error']=str(exc) or '用户中断'
+            state['failure']=error_info(exc)
             state.setdefault('first_error',state['error'])
             if state.get('current'):
                 state['current']['status']='failed';state['events'].append(dict(state['current'],at=now()))
             # Keep the last successful checkpoint; do not bless partial mutations as known-safe.
             raise WorkflowError(state['error']) from None
         finally:
+            request_observer.before_write=None
             state['elapsed_seconds']=round(time.monotonic()-started,3)
             save(state_file,state)
             confirmation='模拟确认（自动化测试）' if approval.get('simulated') else '已记录审阅者确认'

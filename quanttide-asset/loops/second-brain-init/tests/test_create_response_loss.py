@@ -44,7 +44,7 @@ class LostCreateTransport(LocalGithubTransport):
 
 class CreateResponseLossTests(unittest.TestCase):
     wait=github.GithubWorkflowTests.wait
-    def test_reviewed_recovery_finishes_27_steps_without_recreating_repos(self):
+    def test_reviewed_recovery_finishes_29_steps_without_recreating_repos(self):
         with tempfile.TemporaryDirectory() as temp:
             base=Path(temp);remotes=base/'bare';remotes.mkdir();transport=LostCreateTransport(remotes)
             studio=ui.Studio(base/'studio',enable_github=True);real_which=e.shutil.which
@@ -65,7 +65,7 @@ class CreateResponseLossTests(unittest.TestCase):
                 studio.execute(newkey,{'plan_id':newview['plan']['id']},resume=True)
                 result=self.wait(studio,newkey)
                 self.assertEqual(result['status'],'completed',result.get('error'))
-                self.assertEqual(result['completed'],27);self.assertTrue(result['report']['technical_passed'])
+                self.assertEqual(result['completed'],29);self.assertTrue(result['report']['technical_passed'])
                 self.assertEqual(len(transport.mutations),8)
                 self.assertEqual(len(set(transport.mutations)),8)
                 log=e.read_json(studio.folder(newkey)/'execution-log.json')

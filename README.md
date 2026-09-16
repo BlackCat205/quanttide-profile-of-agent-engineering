@@ -5,9 +5,9 @@
 
 ## 第二大脑创建工具（本地测试通过版）
 
-直接下载：[完整试用版 ZIP（0.9.0）](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.9.0.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
+直接下载：[完整试用版 ZIP（0.9.2）](https://github.com/BlackCat205/quanttide-profile-of-agent-engineering/archive/refs/heads/second-brain-ui-0.9.2.zip)。解压后先打开 START_HERE.md；Windows 用户双击首次配置.bat，再双击启动向导.bat。
 
-本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.9.0 将关键执行记录与辅助诊断日志分离，增加跨窗口执行互斥、写入前持久化凭据、结构化恢复原因和逐仓库成果状态。升级后可从“领域与任务”打开兼容的 0.8.6 任务继续，不需要换名称重建。Windows/GitHub 实机最终验收仍待完成。资产云按 `.quanttide` 契约登记接入，不要求额外在线接口。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
+本分支提供中文本机向导，入口见 [快速上手](START_HERE.md)。UI 0.9.2 除登记插件入口外，还为生成的领域仓库和总入口生成 `.quanttide/asset/contract.yaml`，并核对契约与实际挂载一致；审阅页会在写入前展示完整契约。旧任务不会被静默增加未确认的写入步骤，需重新生成补全方案。Windows/GitHub 实机最终验收仍待完成。详见 [提交评审说明](quanttide-asset/loops/second-brain-init/提交评审说明.md)。
 
 ## 目录结构
 

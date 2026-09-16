@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.9.0'
+VERSION='0.9.2'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -517,6 +517,8 @@ class Studio:
         item('directories','资料是否有统一位置','平台、工具、示例，加上 11 类事实资料和 6 类方法资料，共 20 类坐标。','全部 20 类坐标存在。' if not missing else '缺少：'+'、'.join(missing),not missing,'资产章程第七条',[f'{target}/README.md'])
         details=raw.get('details',[]);mounts=[x for x in details if isinstance(x.get('check'),dict) and x['check'].get('kind')=='mount']
         item('mounts','仓库连接是否正确','6 个配套仓库连接到领域，领域连接到总入口；地址和版本指针均正确。',f'{sum(bool(x["passed"]) for x in mounts)}/{len(mounts)} 项连接检查通过。',len(mounts)==7 and all(x['passed'] for x in mounts),B,[f'{target}/.gitmodules',root_name+'/.gitmodules'])
+        contracts=[x for x in details if isinstance(x.get('check'),dict) and x['check'].get('kind')=='asset-contract']
+        item('contracts','资产云能否识别领域与资产','领域契约登记 6 个实际挂载资产；总入口契约登记领域挂载；路径、仓库地址和 .gitmodules 一致。',f'{sum(bool(x["passed"]) for x in contracts)}/{len(contracts)} 份契约检查通过。',len(contracts)==2 and all(x['passed'] for x in contracts),'资产云 Rust CLI 支持的 .quanttide/asset/contract.yaml 与本插件挂载一致性规则',[f'{target}/.quanttide/asset/contract.yaml',root_name+'/.quanttide/asset/contract.yaml'])
         root=provider.repo(root_name);root_text=e.text_at(root,'README.md');index=e.text_at(root,'domains/README.md')
         registered='domains/'+target in e.modules(root)
         idx_ok=all('## '+x in index for x in ['目录结构','领域清单','领域项目']) and target in index and target in root_text
@@ -715,7 +717,9 @@ class Studio:
                 {'status':'passed' if expected==set(plan['names']) else 'failed','title':'仓库名称与创建范围','detail':'领域短名生成领域仓库；英文全名生成资料仓库后缀。依据：资产章程第五、六条及原始新建流程。'},
                 {'status':'manual','title':'用途、英文含义与领域边界','detail':'请阅读下方需求摘要，确认准确表达你的需求；程序不能替你判断。'},
                 {'status':'manual','title':'本次操作位置','detail':'本机独立测试空间，不写入 GitHub。' if plan['provider']=='local' else '将写入 '+plan['organization']+' 的公开 GitHub 仓库；请核对账号、公开属性与已有规则。'}]
-            result['plan']={'id':plan['id'],'domain':d,'root_repo':root_name,'root_mode':'new' if plan['config'].get('new_root') else 'existing','provider':plan['provider'],'workspace':plan['workspace'],'owner_type':(plan.get('github_identity') or {}).get('owner_type'),'account_login':(plan.get('github_identity') or {}).get('login'),'repositories':[dict(name='quanttide-'+d['short_name'],role='领域首页',purpose='本领域的介绍和资料导航。',path='domains/quanttide-'+d['short_name'])]+[dict(name=m[k]['repo'],role=ROLES[k][0],purpose=ROLES[k][1],path=m[k]['path']) for k in ROLES]+[dict(name=root_name,role='总入口',purpose='从这里查找各领域。',path='总入口')],'inspection':plan['inspection']}
+            result['preflight'] += [{'status':'failed','title':'领域说明疑似有模板残留','detail':warning} for warning in plan.get('quality_warnings',[])]
+            contracts=[{'repo':op['repo'],'path':'.quanttide/asset/contract.yaml','content':op['content']} for op in plan['operations'] if op['kind']=='asset-contract']
+            result['plan']={'id':plan['id'],'domain':d,'root_repo':root_name,'root_mode':'new' if plan['config'].get('new_root') else 'existing','provider':plan['provider'],'workspace':plan['workspace'],'owner_type':(plan.get('github_identity') or {}).get('owner_type'),'account_login':(plan.get('github_identity') or {}).get('login'),'repositories':[dict(name='quanttide-'+d['short_name'],role='领域首页',purpose='本领域的介绍和资料导航。',path='domains/quanttide-'+d['short_name'])]+[dict(name=m[k]['repo'],role=ROLES[k][0],purpose=ROLES[k][1],path=m[k]['path']) for k in ROLES]+[dict(name=root_name,role='总入口',purpose='从这里查找各领域。',path='总入口')],'inspection':plan['inspection'],'contracts':contracts,'quality_warnings':plan.get('quality_warnings',[])}
         if log.get('events'):result['last_operation']=log['events'][-1].get('kind')
         if plan:
             result['observation']={'at':plan['created_at'],'provider':plan['provider'],'organization':plan['organization'],'scope':'仅本次计划涉及的仓库，非持续监控。','rules':plan['sources']['bylaw'],'spec_sha256':plan['spec_sha256']}

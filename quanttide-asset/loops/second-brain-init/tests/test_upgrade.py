@@ -130,7 +130,7 @@ class UpgradeUITests(UITests):
             self.assertTrue(result['diagnostic_warning'])
             self.assertEqual(self.request('/api/runs/'+key+'/diagnostics')[0],200)
         self.assertEqual(path.read_bytes(),before)
-        self.assertEqual(self.studio.view(key)['completed'],27)
+        self.assertEqual(self.studio.view(key)['completed'],29)
 
     def test_critical_read_failure_disables_actions_and_recovers(self):
         key,v=self.plan();original=e.read_json
@@ -177,7 +177,7 @@ class UpgradeUITests(UITests):
         self.assertEqual(self.studio.view(key)['recovery']['action'],'resume')
         self.json('/api/runs/'+key+'/resume',{'plan_id':v['plan']['id']})
         result=self.wait(key)
-        self.assertEqual(result['completed'],27,result);self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['completed'],29,result);self.assertEqual(result['status'],'completed',result)
 
     def test_previous_executor_plan_keeps_original_approval_and_scope(self):
         key,v=self.plan();folder=self.studio.folder(key);plan=e.read_json(folder/'execution-plan.json')

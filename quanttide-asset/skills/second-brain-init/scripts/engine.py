@@ -20,8 +20,11 @@ from urllib.parse import quote
 
 import yaml
 
-VERSION = '0.5.0'
+VERSION = '0.5.1'
 COMPATIBLE_ENGINE_SHA256S = {
+    # 0.5.0: approved legacy plans keep their original operation scope. 0.5.1
+    # adds contracts only to newly generated and newly approved plans.
+    'c462241bc62586a72dbd877e37d5e8a9c6e96db395688a6da46122b71a410fda',
     # 0.4.6: storage and coordination upgrade; approved operations are unchanged.
     '5b2d36940bae6355215c18101a51b722d59e1f8b752e4127410ad58ba56b75c0',
     # 0.4.5: same approved content; only transport reconciliation changes.
@@ -40,6 +43,10 @@ COMPATIBLE_ENGINE_SHA256S = {
     # submodules from already verified local child repositories and can
     # reconcile an interrupted mount without repeating completed operations.
     '480f5175d85a8a82ca1ca2b7f342982cdf620d620603cf53f192b300e4abaab2',
+}
+COMPATIBLE_SPEC_SHA256S = {
+    # 0.2.1: existing approved plans do not gain contract writes implicitly.
+    'ac098eaeb2251c6a5790b3683d22329ed957ab744a93fe177ad36b72b5f8e2f7',
 }
 verification_observer = threading.local()
 request_observer = threading.local()
@@ -545,6 +552,174 @@ def snapshot(provider, names, strict=False, baseline=None):
 def asset_map(domain, spec):
     return {key: {'repo': rule['repo'].format(**domain), 'path': rule['path'].format(**domain)} for key, rule in spec['asset_types'].items()}
 
+ASSET_DESCRIPTIONS = {
+    'platform': ('平台', 'code', '承载本领域的应用或云平台骨架。'),
+    'toolkit': ('工具箱', 'code', '承载本领域可重复使用的程序工具。'),
+    'example': ('实验室', 'code', '承载本领域的实验、原型和示例程序。'),
+    'context': ('工作语境', 'data', '保存开展本领域工作前需要了解的背景与约定。'),
+    'journal': ('工作日志', 'data', '记录本领域的工作过程、讨论与变化。'),
+    'intention': ('工作意图', 'data', '记录本领域的目标、动机与产品设想。'),
+    'domain': ('领域第二大脑', 'data', '按统一结构组织一个领域的知识资产。'),
+    'asset': ('知识资产', 'data', '由第二大脑总入口登记的知识资产。'),
+}
+ASSET_BOUNDARIES = {
+    'platform': '只提供应用或云平台的初始化骨架，不代表业务系统已经开发或上线。',
+    'toolkit': '只保存可复用工具，不保存领域背景、过程日志或目标决策。',
+    'example': '只保存实验、原型与示例，不承载正式生产资料。',
+    'context': '只保存工作背景与约定，不代替过程日志和工作意图。',
+    'journal': '只记录工作过程与变化，不代替稳定背景和目标定义。',
+    'intention': '只记录目标、动机与设想，不代替执行日志和实验代码。',
+}
+
+def parse_gitmodules(text):
+    """Parse the path and URL pairs that Asset Cloud contracts must mirror."""
+    result, current = {}, None
+    for raw in text.splitlines():
+        line = raw.strip()
+        match = re.fullmatch(r'\[submodule\s+"([^"]+)"\]', line)
+        if match:
+            current = {'name': match.group(1)}
+            continue
+        if current and '=' in line:
+            key, value = (part.strip() for part in line.split('=', 1))
+            current[key] = value
+            if current.get('path') and current.get('url'):
+                result[current['path']] = {'url': current['url'], 'name': current['name']}
+    return result
+
+def repository_name(url):
+    value = str(url).rstrip('/').rsplit('/', 1)[-1]
+    return value[:-4] if value.endswith('.git') else value
+
+def domain_quality_warnings(domain):
+    """Find demonstrated template residue without guessing at domain meaning."""
+    endings={}
+    for key in ('overview','boundary','neighbors'):
+        value=str((domain or {}).get(key,'')).strip()
+        match=re.search(r'(?<!\d)(\d+)\s*[。.!！?？]?$',value)
+        if match:endings.setdefault(match.group(1),[]).append(key)
+    labels={'overview':'领域用途','boundary':'收录范围','neighbors':'相邻领域分工'}
+    return ['以下说明重复以数字“'+suffix+'”结尾，可能是模板拼接残留：'+'、'.join(labels[k] for k in keys)+'。请返回修改后重新生成方案。'
+            for suffix,keys in endings.items() if len(keys)>=2]
+
+def asset_kind(path, repository, domain, spec):
+    if domain:
+        for kind, item in asset_map(domain, spec).items():
+            if item['path'] == path or item['repo'] == repository:
+                return kind
+    if path.startswith('domains/'):
+        return 'domain'
+    if path.startswith('apps/'):
+        return 'platform'
+    if path.startswith('packages/'):
+        return 'toolkit'
+    if path.startswith('examples/'):
+        return 'example'
+    if path.startswith('data/'):
+        return path.split('/', 2)[1]
+    if path.startswith('docs/'):
+        return path.split('/', 2)[1]
+    return 'asset'
+
+def contract_document(existing, module_map, provider_kind, domain, spec):
+    """Return a Rust-CLI-compatible contract without inventing schema fields."""
+    try:
+        contract = yaml.safe_load(existing) if existing.strip() else {}
+    except yaml.YAMLError as exc:
+        raise WorkflowError('已有资产契约格式错误，不能覆盖：'+str(exc), code='contract-invalid') from exc
+    require(isinstance(contract, dict), '已有资产契约必须是 YAML 对象，不能覆盖。')
+    assets = contract.setdefault('assets', {})
+    require(isinstance(assets, dict), '已有资产契约的 assets 必须是对象，不能覆盖。')
+    paths = {}
+    for key, asset in assets.items():
+        require(isinstance(asset, dict), '已有资产契约条目格式错误：'+str(key))
+        metadata = asset.get('metadata') or {}
+        if isinstance(metadata, dict) and metadata.get('path'):
+            require(metadata['path'] not in paths, '已有资产契约重复登记路径：'+str(metadata['path']))
+            paths[metadata['path']] = key
+    for key in list(assets):
+        metadata = assets[key].get('metadata') or {}
+        if metadata.get('managed_by') == 'second-brain-init' and metadata.get('path') not in module_map:
+            del assets[key]
+    used = set(assets)
+    for path, module in sorted(module_map.items()):
+        url = module['url'] if isinstance(module, dict) else str(module)
+        repo = repository_name(url)
+        kind = asset_kind(path, repo, domain, spec)
+        title, value_type, description = ASSET_DESCRIPTIONS.get(kind, (kind, 'data', '第二大脑知识资产。'))
+        key = paths.get(path)
+        if key is None:
+            key = kind
+            if key in used:
+                key = re.sub(r'[^a-z0-9_]+', '_', repo.lower().replace('-', '_')).strip('_')
+            require(key and key not in used, '无法为资产生成唯一契约标识：'+repo)
+        previous = assets.get(key, {})
+        metadata = dict(previous.get('metadata') or {})
+        old_url = metadata.get('repository')
+        require(not old_url or old_url == url, '已有资产契约的仓库地址与子模块不一致：'+path)
+        metadata.update(path=path, repository=url, managed_by='second-brain-init')
+        assets[key] = {
+            **previous,
+            'title': previous.get('title') or title,
+            'type': previous.get('type') or value_type,
+            'category': previous.get('category') or kind,
+            'audience': previous.get('audience') or '团队成员与维护者',
+            'path': path,
+            'description': previous.get('description') or description,
+            'provider': previous.get('provider') or provider_kind,
+            'metadata': metadata,
+        }
+        used.add(key)
+    validation = contract.setdefault('validation', {})
+    require(isinstance(validation, dict), '已有资产契约的 validation 必须是对象。')
+    policies = validation.setdefault('policies', [])
+    require(isinstance(policies, list), '已有资产契约的 validation.policies 必须是列表。')
+    groups = {}
+    for path in module_map:
+        parts = path.split('/')
+        if len(parts) >= 2:
+            groups.setdefault(parts[0], set()).add(parts[1])
+    for selector, categories in sorted(groups.items()):
+        current = next((p for p in policies if isinstance(p, dict) and p.get('selector') == selector), None)
+        if current is None:
+            current = {'selector': selector, 'mode': 'ATOMIC', 'required_categories': []}
+            catch = next((i for i, p in enumerate(policies) if isinstance(p, dict) and p.get('selector') == '**'), len(policies))
+            policies.insert(catch, current)
+        require(current.get('mode') == 'ATOMIC', '已有资产契约对 '+selector+' 使用非 ATOMIC 策略，不能静默改写。')
+        required = current.setdefault('required_categories', [])
+        require(isinstance(required, list), '已有资产契约的 required_categories 必须是列表。')
+        for category in sorted(categories):
+            if category not in required:
+                required.append(category)
+    if not any(isinstance(p, dict) and p.get('selector') == '**' for p in policies):
+        policies.append({'selector': '**', 'mode': 'SCOPED'})
+    return yaml.safe_dump(contract, allow_unicode=True, sort_keys=False)
+
+def validate_asset_contract(repo):
+    modules_now = modules(repo)
+    path = repo/'.quanttide/asset/contract.yaml'
+    require(path.is_file(), '缺少资产云契约 .quanttide/asset/contract.yaml')
+    try:
+        contract = yaml.safe_load(path.read_text(encoding='utf-8'))
+    except yaml.YAMLError as exc:
+        raise WorkflowError('资产云契约无法解析：'+str(exc), code='contract-invalid') from exc
+    require(isinstance(contract, dict) and isinstance(contract.get('assets'), dict), '资产云契约缺少 assets。')
+    registered = {}
+    for key, asset in contract['assets'].items():
+        require(isinstance(asset, dict) and isinstance(asset.get('type'), str) and asset['type'], '资产契约条目缺少 type：'+str(key))
+        metadata = asset.get('metadata') or {}
+        require(isinstance(metadata, dict), '资产契约 metadata 格式错误：'+str(key))
+        registered_path = metadata.get('path')
+        if not registered_path:
+            continue
+        require(registered_path not in registered, '资产契约重复登记路径：'+registered_path)
+        registered[registered_path] = metadata.get('repository')
+        require(asset.get('path') == registered_path, '资产契约 path 与 metadata.path 不一致：'+registered_path)
+    for module_path, module in modules_now.items():
+        require(registered.get(module_path) == module['url'], '资产契约与 .gitmodules 不一致：'+module_path)
+    require(isinstance((contract.get('validation') or {}).get('policies'), list), '资产契约缺少 validation.policies。')
+    return contract
+
 def content_block(text, key, body):
     begin, end = f'<!-- second-brain-init:{key}:begin -->', f'<!-- second-brain-init:{key}:end -->'
     block = begin+'\n'+body.rstrip()+'\n'+end
@@ -627,22 +802,26 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
     def add(kind, repo, **kwargs):
         names.add(slug(repo))
         ops.append(dict(id=f'{len(ops)+1:03}', kind=kind, repo=repo, **kwargs))
-    def ensure(name, allow, title=None):
-        add('ensure-repo', name, allow_create=allow, title=title or name, require_new=bool((cfg.get('new_repositories_only') and name!=root) or (cfg.get('new_root') and name==root)))
+    def ensure(name, allow, title=None, **details):
+        add('ensure-repo', name, allow_create=allow, title=title or name,
+            require_new=bool((cfg.get('new_repositories_only') and name!=root) or (cfg.get('new_root') and name==root)),
+            **details)
     def finish(name):
         add('finish', name)
     mounts = list(cfg.get('mounts', []))
     if scenario == 'new-domain':
         mapping = asset_map(domain, spec)
-        mounts = [mapping[k] for k in spec['initial_assets']]
+        mounts = [dict(mapping[k], asset_kind=k) for k in spec['initial_assets']]
     if scenario == 'append-assets':
         require(all(k in spec['asset_types'] for k in cfg['assets']), 'assets 包含未知资产类型。')
-        mounts = [asset_map(domain, spec)[k] for k in cfg['assets']]
+        mounts = [dict(asset_map(domain, spec)[k], asset_kind=k) for k in cfg['assets']]
     if scenario not in ('rename','release'):
         require(all(m['repo'] not in (target, root) for m in mounts), '不能自挂载或形成根仓库循环。')
         require(len({m['path'] for m in mounts})==len(mounts), '挂载路径重复。')
         for m in mounts:
-            ensure(m['repo'], scenario in ('new-domain','append-assets'))
+            kind = m.get('asset_kind') or asset_kind(m['path'], m['repo'], domain, spec)
+            ensure(m['repo'], scenario in ('new-domain','append-assets'), asset_kind=kind,
+                   mount_path=m['path'], domain=domain if domain else None)
             finish(m['repo'])
         ensure(target, scenario in ('new-domain','aggregate-container'), domain.get('chinese_name', target))
         for m in mounts:
@@ -653,6 +832,8 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
             checks.append({'kind':'domain','repo':target,'directories':spec['domain_directories']})
         elif scenario == 'aggregate-container':
             add('container-docs', target, asset_type=cfg['asset_type'])
+        add('asset-contract', target, domain=domain if domain else None)
+        checks.append({'kind':'asset-contract','repo':target})
         add('catalog', target)
         finish(target)
         if register:
@@ -660,6 +841,8 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
             path = ('assets/' if scenario == 'aggregate-container' else 'domains/')+target
             add('mount', root, child=target, path=path)
             checks.append({'kind':'mount','repo':root,'child':target,'path':path})
+            add('asset-contract', root, domain=None)
+            checks.append({'kind':'asset-contract','repo':root})
             add('catalog', root)
             add('root-index', root)
             finish(root)
@@ -722,15 +905,30 @@ def make_plan(config, workspace, run_dir, provider_kind='local', organization='q
         inspection[name] = {p: text_at(src,p) for p in INSPECTION_FILES}
         if scenario == 'new-domain' and name == target:
             require('second-brain-init:domain:begin' in inspection[name]['README.md'], '同名领域已存在；请使用 complete-existing 调查补全，不能按新建处理。')
+    for op in ops:
+        if op['kind'] != 'asset-contract':
+            continue
+        existing = inspection.get(op['repo'], {})
+        desired = parse_gitmodules(existing.get('.gitmodules', ''))
+        for mount in (item for item in ops if item['kind'] == 'mount' and item['repo'] == op['repo']):
+            desired[mount['path']] = {'name': mount['path'], 'url': provider.remote(mount['child'])}
+        op['content'] = contract_document(existing.get('.quanttide/asset/contract.yaml', ''), desired,
+                                          provider_kind, op.get('domain'), spec)
     plan = dict(schema_version=2, plugin='second-brain-init', version=VERSION, created_at=now(), scenario=scenario,
                 provider=provider_kind, organization=organization, github_identity=identity, workspace=str(work), config=cfg,
                 operations=ops, checks=checks, names=sorted(names), before=initial, inspection=inspection,
+                quality_warnings=domain_quality_warnings(domain),
                 engine_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), spec_sha256=hashlib.sha256(SPEC.read_bytes()).hexdigest(), sources=spec['sources'])
     plan['id'] = digest(plan)
     save(run/'execution-plan.json', plan)
     lines = ['# 第二大脑执行计划','','状态：等待人工确认。','',f'计划编号：{plan["id"]}', '',f'执行环境：{provider_kind}', '', '## 已确认的输入','', '```yaml',yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False).rstrip(),'```','','## 操作清单','']
     for op in ops:
         lines.append(f'- {op["id"]} {op["kind"]}：{op["repo"]}'+(f' → {op["path"]}' if 'path' in op else '')+'。')
+    contracts = [op for op in ops if op['kind'] == 'asset-contract']
+    if contracts:
+        lines += ['','## 将写入的资产云契约','']
+        for op in contracts:
+            lines += ['### '+op['repo'],'','```yaml',op['content'].rstrip(),'```','']
     lines += ['','## 执行与审阅','','本计划包含建仓、文件写入、提交与推送。local 模式仅操作指定工作区内的本地仓库；github 模式将操作公开 GitHub 仓库。', '', '请检查 execution-plan.json 的 inspection 中的原有契约及 config 中的名称、边界和挂载目标。确认后运行 approve，修改输入则新建一份计划。','']
     (run/'execution-plan.md').write_text('\n'.join(lines), encoding='utf-8')
     return plan
@@ -858,12 +1056,14 @@ def load_plan(run, readonly=False):
     require(digest(plan) == expected, '计划内容已变化，请重新生成并确认。')
     plan['id'] = expected
     require(readonly or engine_compatible(plan), '执行器版本已变化；旧任务请使用检查或专用修复入口，未开始任务需重新生成计划。')
-    require(plan['spec_sha256'] == hashlib.sha256(SPEC.read_bytes()).hexdigest(), '配置规格已变化，请重新生成计划。')
+    current_spec = hashlib.sha256(SPEC.read_bytes()).hexdigest()
+    require(plan['spec_sha256'] in ({current_spec} | COMPATIBLE_SPEC_SHA256S), '配置规格已变化，请重新生成计划。')
     return plan
 
 def approve(run, reviewer, accepted_id=None, simulated=False):
     plan = load_plan(run)
     require(bool(reviewer.strip()), '需要填写审阅者。')
+    require(not plan.get('quality_warnings'), '方案中的领域说明疑似包含模板残留；请返回修改后重新生成方案。')
     if accepted_id is None:
         print(Path(run,'execution-plan.md').read_text(encoding='utf-8'))
         accepted_id = input('确认后输入完整计划编号（回车取消）：').strip()
@@ -967,6 +1167,19 @@ class Executor:
                 container=self.plan['scenario']=='aggregate-container' and op['repo']!=self.plan['config'].get('root_repo','quanttide')
                 self.write(repo,'LICENSE',APACHE if container else CC,missing_only=True)
                 self.write(repo,'CHANGELOG.md','# 变更记录\n\n## [Unreleased]\n\n## [0.1.0]\n\n- 初始化第二大脑仓库。\n',missing_only=True)
+                if op.get('asset_kind'):
+                    title, _, description = ASSET_DESCRIPTIONS.get(op['asset_kind'], (op['asset_kind'], 'data', '第二大脑知识资产。'))
+                    domain = op.get('domain') or {}
+                    body = ('## 资产定位\n\n'
+                            f'- 资产类型：{title}。\n'
+                            f'- 所属领域：{domain.get("chinese_name", "当前领域")}。\n'
+                            f'- 挂载位置：`{op.get("mount_path", "未登记")}`。\n\n'
+                            '## 用途与边界\n\n'
+                            +description+'\n\n'
+                            +ASSET_BOUNDARIES.get(op['asset_kind'], '仅承载本资产类型范围内的内容。')+'\n\n'
+                            '## 初始化来源\n\n'
+                            f'由 second-brain-init 执行器 {self.plan["version"]} 按已确认计划初始化。')
+                    self.block(repo, 'README.md', 'asset-role', body)
         elif kind == 'mount':
             path, url = op['path'], provider.remote(op['child'])
             existing = modules(repo)
@@ -1004,6 +1217,9 @@ class Executor:
         elif kind == 'container-docs':
             self.write(repo,'LICENSE',APACHE,missing_only=True)
             self.block(repo,'README.md','container','## 聚合范围\n\n按 default 和 domains 汇集 '+op['asset_type']+' 资产。')
+        elif kind == 'asset-contract':
+            self.write(repo, '.quanttide/asset/contract.yaml', op['content'])
+            validate_asset_contract(repo)
         elif kind == 'catalog':
             entries = modules(repo)
             body = '## 资产目录\n\n'+'\n'.join(f'- [{path}]({path}/)：{value["url"]}。' for path,value in sorted(entries.items()))
@@ -1027,7 +1243,8 @@ class Executor:
                 staged = set(filter(None,git(repo,'diff','--cached','--name-only','-z').stdout.split('\0')))
                 require(bool(paths) and (pending | staged) <= paths, '发现未归属到工作流的变更，请人工检查；不会提交额外文件。')
                 changelog = text_at(repo,'CHANGELOG.md') or '# 变更记录\n\n## [Unreleased]\n'
-                entry = '- second-brain-init '+self.plan['id'][:12]+'：'+self.plan['scenario']+'。'
+                entry = ('- second-brain-init 执行器 '+self.plan['version']+'；计划编号 '
+                         +self.plan['id'][:12]+'；场景 '+self.plan['scenario']+'。')
                 if entry not in changelog:
                     if '## [Unreleased]' not in changelog:
                         changelog += '\n## [Unreleased]\n'
@@ -1134,6 +1351,8 @@ def verify(plan, approval=None):
                 require(all(safe_path(repo,p).is_dir() for p in check['directories']), '领域目录缺失')
                 require(bool(text_at(repo,'LICENSE')), 'LICENSE 缺失')
                 require(all('## '+name in text_at(repo,'README.md') for name in ['概述','领域边界','相邻领域分工']), '领域 README 缺少必要章节')
+            elif check['kind']=='asset-contract':
+                validate_asset_contract(provider.repo(check['repo']))
             elif check['kind']=='no-old-references':
                 for name in check['repos']:
                     repo = provider.repo(name)

@@ -158,7 +158,7 @@ class GithubWorkflowTests(unittest.TestCase):
                     if mode=='new':self.assertFalse(transport.mutations)
                     studio.execute(key,{'plan_id':view['plan']['id'],'confirmed':True,'reviewer':'自动测试：GitHub 接口模拟','github_confirmation':'BlackCat205'})
                     view=self.wait(studio,key);self.assertEqual(view['status'],'completed',(view.get('error'),view.get('report')));self.assertTrue(view['report']['technical_passed'])
-                    self.assertEqual(view['completed'],27)
+                    self.assertEqual(view['completed'],29)
                     self.assertTrue(any(x['status']=='running' for x in view['events']))
                     self.assertTrue(all(x['commit'] for x in view['report']['repositories']))
                     self.assertIn('https://github.com/BlackCat205/second-brain-test',studio.export(key))

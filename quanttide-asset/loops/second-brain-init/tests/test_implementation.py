@@ -51,6 +51,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(e.read_json(run/'approval-record.json')['simulated'])
         self.assertEqual(e.read_json(run/'verification-report.json')['approval_kind'],'simulated')
         self.assertIn('模拟确认', (run/'result.md').read_text(encoding='utf-8'))
+        contract=yaml.safe_load((domain/'.quanttide/asset/contract.yaml').read_text(encoding='utf-8'))
+        self.assertEqual({a['metadata']['path'] for a in contract['assets'].values()},set(e.modules(domain)))
+        self.assertEqual(len(contract['assets']),6)
+        root_contract=yaml.safe_load((self.provider.repo('quanttide')/'.quanttide/asset/contract.yaml').read_text(encoding='utf-8'))
+        self.assertTrue(any(a['metadata']['path']=='domains/quanttide-sample' for a in root_contract['assets'].values()))
+        self.assertIn('## 将写入的资产云契约',(run/'execution-plan.md').read_text(encoding='utf-8'))
+        for child in e.modules(domain).values():
+            child_readme=e.text_at(self.provider.repo(e.repository_name(child['url'])),'README.md')
+            self.assertIn('## 资产定位',child_readme)
+            self.assertIn('## 用途与边界',child_readme)
     def test_workspace_lock_blocks_other_run(self):
         run,plan=self.plan()
         e.approve(run,'test',plan['id'],True)
@@ -62,6 +72,14 @@ class WorkflowTests(unittest.TestCase):
     def test_unapproved_run_never_creates_workspace(self):
         run,plan=self.plan()
         with self.assertRaises(e.WorkflowError):e.apply(run)
+        self.assertFalse(self.work.exists())
+    def test_repeated_numeric_template_residue_blocks_approval(self):
+        cfg=copy.deepcopy(BASE)
+        cfg['domain'].update(overview='验证创建流程。6',boundary='仅包含测试资料。6',neighbors='正式内容属于其他领域。6')
+        run,plan=self.plan(cfg)
+        self.assertTrue(plan['quality_warnings'])
+        with self.assertRaisesRegex(e.WorkflowError,'模板残留'):
+            e.approve(run,'test',plan['id'],True)
         self.assertFalse(self.work.exists())
     def test_changed_plan_invalidates_approval(self):
         run,plan=self.plan()
@@ -116,6 +134,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(e.text_at(repo,'README.md').count('## 概述'),1)
         self.assertIn('人工概述。',e.text_at(repo,'README.md'))
         self.assertEqual(e.text_at(repo,'LICENSE'),'Existing project license\n')
+
+    def test_complete_existing_backfills_domain_and_root_contracts(self):
+        self.execute()
+        domain=self.provider.repo('quanttide-sample');root=self.provider.repo('quanttide')
+        for repo in (domain,root):
+            e.git(repo,'rm','--','.quanttide/asset/contract.yaml')
+            e.git(repo,'commit','-m','test: simulate legacy output without contract')
+            e.git(repo,'push')
+        cfg=copy.deepcopy(BASE);cfg.update(scenario='complete-existing',target_repo='quanttide-sample')
+        self.execute(cfg)
+        self.assertEqual(len(yaml.safe_load(e.text_at(domain,'.quanttide/asset/contract.yaml'))['assets']),6)
+        self.assertTrue(any(a['metadata']['path']=='domains/quanttide-sample'
+                            for a in yaml.safe_load(e.text_at(root,'.quanttide/asset/contract.yaml'))['assets'].values()))
+
+    def test_existing_contract_url_conflict_stops_before_new_plan(self):
+        self.execute()
+        domain=self.provider.repo('quanttide-sample')
+        contract=yaml.safe_load(e.text_at(domain,'.quanttide/asset/contract.yaml'))
+        next(iter(contract['assets'].values()))['metadata']['repository']='https://github.com/other/repository.git'
+        (domain/'.quanttide/asset/contract.yaml').write_text(yaml.safe_dump(contract,allow_unicode=True),encoding='utf-8')
+        e.git(domain,'add','--','.quanttide/asset/contract.yaml');e.git(domain,'commit','-m','test: conflicting contract');e.git(domain,'push')
+        cfg=copy.deepcopy(BASE);cfg.update(scenario='complete-existing',target_repo='quanttide-sample')
+        with self.assertRaisesRegex(e.WorkflowError,'契约的仓库地址与子模块不一致'):
+            self.plan(cfg)
     def test_append_replaces_only_empty_coordinate(self):
         self.execute()
         cfg=copy.deepcopy(BASE);cfg.update(scenario='append-assets',target_repo='quanttide-sample',assets=['report'])

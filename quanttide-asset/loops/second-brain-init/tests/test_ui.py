@@ -75,7 +75,7 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.request('/api/runs/'+key+'/execute',data)[0],400);self.assertFalse(work.exists())
         self.json('/api/runs/'+key+'/execute',{'plan_id':v['plan']['id'],'confirmed':True,'reviewer':'automated-test'})
         v=self.wait(key);self.assertEqual(v['status'],'completed',v)
-        self.assertEqual(v['completed'],27);self.assertTrue(v['report']['technical_passed']);self.assertEqual(len(v['report']['rows']),7)
+        self.assertEqual(v['completed'],29);self.assertTrue(v['report']['technical_passed']);self.assertEqual(len(v['report']['rows']),8)
         self.assertEqual(len(list((work/'repositories').iterdir())),8)
         self.assertTrue(v['report']['simulated']);self.assertIsNone(v['acceptance'])
         result=self.accept(key,v);self.assertEqual(result['overall'],'needs-improvement');self.assertTrue(result['simulated'])
@@ -148,6 +148,15 @@ class UITests(unittest.TestCase):
         self.assertIn("$('#retry-plan').hidden=r?.action!=='retry-plan'",script)
         self.assertIn("if(!v.has_plan)$('#connection-check').disabled=true",script)
 
+    def test_history_panel_can_collapse_and_navigation_reopens_it(self):
+        html=(ROOT/'ui/static/index.html').read_text(encoding='utf-8')
+        script=(ROOT/'ui/static/app.js').read_text(encoding='utf-8')
+        self.assertIn('id="history-toggle"',html)
+        self.assertIn('id="history-body"',html)
+        self.assertIn('aria-controls="history-body"',html)
+        self.assertIn('function setHistoryExpanded',script)
+        self.assertIn("$('#nav-history').onclick=openHistory",script)
+
     def test_paused_execution_exposes_one_human_readable_recovery_action(self):
         key,v=self.plan();folder=self.studio.folder(key)
         ui.e.save(folder/'approval-record.json',{'plan_id':v['plan']['id'],'accepted':True})
@@ -160,7 +169,7 @@ class UITests(unittest.TestCase):
         result=self.studio.view(key);recovery=result['recovery']
         self.assertEqual(recovery['action'],'resume')
         self.assertEqual(recovery['action_label'],'自动核对并继续')
-        self.assertIn('2/27',recovery['title'])
+        self.assertIn('2/29',recovery['title'])
         self.assertIn('已完成项不会重做',recovery['protected'])
         self.assertEqual(len(recovery['steps']),3)
         self.assertIn('仓库 ID',recovery['steps'][1])

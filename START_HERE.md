@@ -2,17 +2,15 @@
 
 当前界面版本：0.9.0，执行器：0.5.0。新版重点修复任务记录、重复窗口、错误恢复和成果查找；适用于所有领域名称。兼容的 0.8.6 任务保留原计划与确认后继续。自动化结果见 [本轮测试记录](quanttide-asset/loops/second-brain-init/trials/trial-021.md)，Windows/GitHub 实机最终验收仍待完成。
 
-## Linux / macOS 启动（跨平台试用）
+## Linux / macOS 启动（试用）
 
-需要 Python 3.10+（含 venv）、Git 2.28+；写入 GitHub 时另需安装 GitHub CLI 并运行 `gh auth login`。在解压后的项目根目录运行：
+1. 安装 **Python 3.10 或以上**和 **Git 2.28 或以上**。
+2. 下载并解压工具，在解压后的项目文件夹打开终端。首次运行：`sh ./首次配置.sh`（需要联网）。
+3. 配置完成后，运行 `sh ./启动向导.sh`。以后只需执行这一步。
 
-```sh
-chmod +x ./首次配置.sh ./启动向导.sh
-./首次配置.sh
-./启动向导.sh
-```
+如果要创建到 GitHub，还需安装 [GitHub CLI](https://cli.github.com/)；在终端运行 `gh auth login` 完成登录。若提示缺少 `venv` 或 `pip`，请安装当前 Python 对应的组件后重新运行首次配置。
 
-也可用 `sh ./首次配置.sh` 和 `sh ./启动向导.sh` 启动。首次配置联网安装 PyYAML，虚拟环境保存在 `.venv`，工作记录默认保存在用户主目录的 `QuanttideSecondBrain`。如果系统缺少 venv 或 pip，先用系统包管理器安装对应 Python 组件；macOS 可通过 python.org 或包管理器安装 Python。不要把 Windows 的 `.venv` 复制到其他系统，请在各系统分别运行首次配置。当前已在 Linux 验证本地流程；macOS 仍需实际机器测试，GitHub 远端流程也需逐平台实测。
+目前已在 Linux 验证本地创建流程；macOS 和真实 GitHub 创建流程仍待实机验证。
 
 ## 第一次安装
 

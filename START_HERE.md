@@ -2,6 +2,18 @@
 
 当前界面版本：0.9.0，执行器：0.5.0。新版重点修复任务记录、重复窗口、错误恢复和成果查找；适用于所有领域名称。兼容的 0.8.6 任务保留原计划与确认后继续。自动化结果见 [本轮测试记录](quanttide-asset/loops/second-brain-init/trials/trial-021.md)，Windows/GitHub 实机最终验收仍待完成。
 
+## Linux / macOS 启动（跨平台试用）
+
+需要 Python 3.10+（含 venv）、Git 2.28+；写入 GitHub 时另需安装 GitHub CLI 并运行 `gh auth login`。在解压后的项目根目录运行：
+
+```sh
+chmod +x ./首次配置.sh ./启动向导.sh
+./首次配置.sh
+./启动向导.sh
+```
+
+也可用 `sh ./首次配置.sh` 和 `sh ./启动向导.sh` 启动。首次配置联网安装 PyYAML，虚拟环境保存在 `.venv`，工作记录默认保存在用户主目录的 `QuanttideSecondBrain`。如果系统缺少 venv 或 pip，先用系统包管理器安装对应 Python 组件；macOS 可通过 python.org 或包管理器安装 Python。不要把 Windows 的 `.venv` 复制到其他系统，请在各系统分别运行首次配置。当前已在 Linux 验证本地流程；macOS 仍需实际机器测试，GitHub 远端流程也需逐平台实测。
+
 ## 第一次安装
 
 1. 下载完整 ZIP，解压到较短路径，例如 `C:\SecondBrain050`。不要在压缩包中直接运行。

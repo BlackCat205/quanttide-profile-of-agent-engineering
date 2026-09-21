@@ -35,7 +35,7 @@ import survey
 from github_login import Login
 import repair
 import partial_recovery
-VERSION='0.9.2'
+VERSION='0.9.3'
 ROLES={'platform':('应用云','以后放应用项目；本次仅建立骨架。'),'toolkit':('工具箱','放可重复使用的程序工具。'),'example':('实验室','放实验与示例程序。'),'context':('工作背景','放开展工作前应了解的背景和约定。'),'journal':('工作日志','记录工作过程和讨论。'),'intention':('工作意图','记录为什么做、目标和产品设想。')}
 A='资产章程第五至七条'
 B='原始流程：标准流程'
@@ -317,7 +317,7 @@ class Studio:
                             self.request_log_errors.pop(key,None)
                     except (OSError,e.WorkflowError):
                         with self.guard:
-                            self.request_log_errors[key]={'target':None,'operation':'save-request-log','tool':'local-record','stage':'diagnostics','attempt':1,'started_at':e.now(),'status':'unknown','category':'local-file-busy','reason':'Windows 暂时占用请求日志；主任务未因此停止。'}
+                            self.request_log_errors[key]={'target':None,'operation':'save-request-log','tool':'local-record','stage':'diagnostics','attempt':1,'started_at':e.now(),'status':'unknown','category':'local-file-busy','reason':'系统暂时占用请求日志；主任务未因此停止。'}
                 e.request_observer.callback=request_event
                 survey.observer.callback=request_event
                 e.request_observer.stage='preflight'

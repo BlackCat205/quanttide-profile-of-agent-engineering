@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>启动前检查 · 第二大脑创建工具</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.65 system-ui, -apple-system, sans-serif; color: #233043; background: #f6f8fb; }
+    * { box-sizing: border-box; }
+    main { max-width: 760px; margin: 36px auto; padding: 0 18px 50px; }
+    h1 { font-size: 1.75rem; margin-bottom: 4px; }
+    h2 { font-size: 1.12rem; margin: 0 0 8px; }
+    .muted { color: #55657a; }
+    .card { background: white; border: 1px solid #dbe3ef; border-radius: 14px; padding: 20px 24px; margin: 16px 0; }
+    a { color: #1859bc; }
+    a:focus-visible { outline: 3px solid #1859bc; outline-offset: 2px; }
+    code { background: #eef2f8; padding: 2px 5px; border-radius: 4px; word-break: break-all; }
+    ol { padding-left: 23px; }
+    li { margin: 8px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>启动前检查</h1>
+  <p class="muted">这页随压缩包提供，双击即可查看，不需要先安装 Python。</p>
+  <section class="card">
+    <h2>1. 准备两个软件</h2>
+    <ul>
+      <li><strong>Python 3.10 或以上</strong>：<a href="https://www.python.org/downloads/" target="_blank" rel="noopener noreferrer">Python 官方下载</a>。安装时确认包含 <code>venv</code> 和 <code>pip</code>。</li>
+      <li><strong>Git 2.28 或以上</strong>：<a href="https://git-scm.com/downloads/" target="_blank" rel="noopener noreferrer">Git 官方下载</a>。Linux 用户可按页面中的发行版说明安装。</li>
+    </ul>
+    <p class="muted">已经安装过？直接运行下一步的首次配置脚本，脚本会检查版本并指出缺少什么。</p>
+  </section>
+  <section class="card">
+    <h2>2. 首次配置与日常启动</h2>
+    <p><strong>Windows：</strong>先双击 <code>首次配置.bat</code>，完成后双击 <code>启动向导.bat</code>。</p>
+    <p><strong>Linux / macOS：</strong>在本文件所在文件夹打开终端，依次运行：</p>
+    <ol><li><code>sh ./首次配置.sh</code>（只需首次运行，需联网）</li><li><code>sh ./启动向导.sh</code>（以后用这条启动）</li></ol>
+  </section>
+  <section class="card">
+    <h2>创建到 GitHub 时</h2>
+    <p>还需安装 <a href="https://cli.github.com/" target="_blank" rel="noopener noreferrer">GitHub CLI</a>，并在终端运行 <code>gh auth login</code>。只体验本地创建可跳过。</p>
+  </section>
+  <p class="muted">目前已在 Linux 验证本地创建流程；macOS 和真实 GitHub 创建流程仍待实机验证。</p>
+</main>
+</body>
+</html>

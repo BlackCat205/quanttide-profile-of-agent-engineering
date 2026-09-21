@@ -6,7 +6,7 @@ import subprocess
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[3]
-ROOT_FILES=['START_HERE.md','launch.py','首次配置.bat','启动向导.bat','首次配置.sh','启动向导.sh']
+ROOT_FILES=['START_HERE.md','启动前检查.html','launch.py','首次配置.bat','启动向导.bat','首次配置.sh','启动向导.sh']
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);args=p.parse_args()
